@@ -3,6 +3,9 @@ import { NativeModule, requireNativeModule } from "expo-modules-core";
 // No events needed for our simplified module
 export type HealthModuleEvents = {};
 
+// Define the update frequency type
+export type UpdateFrequency = "immediate" | "hourly" | "daily" | "weekly";
+
 export interface HealthModuleInterface {
   isHealthDataAvailable: boolean;
   checkHealthDataAvailable(): boolean;
@@ -14,6 +17,17 @@ export interface HealthModuleInterface {
    * @returns The step count for the day
    */
   getStepCount(startDate: number, endDate: number): Promise<number>;
+  /**
+   * Enable background delivery for step count updates
+   * @param frequency - The frequency of updates: "immediate", "hourly", "daily", or "weekly"
+   * @returns A promise that resolves to a boolean indicating success
+   */
+  enableBackgroundDelivery(frequency: UpdateFrequency): Promise<boolean>;
+  /**
+   * Disable background delivery for step count updates
+   * @returns A promise that resolves to a boolean indicating success
+   */
+  disableBackgroundDelivery(): Promise<boolean>;
 }
 
 declare class HealthModule
@@ -30,6 +44,17 @@ declare class HealthModule
    * @returns The step count for the day
    */
   getStepCount(startDate: number, endDate: number): Promise<number>;
+  /**
+   * Enable background delivery for step count updates
+   * @param frequency - The frequency of updates: "immediate", "hourly", "daily", or "weekly"
+   * @returns A promise that resolves to a boolean indicating success
+   */
+  enableBackgroundDelivery(frequency: UpdateFrequency): Promise<boolean>;
+  /**
+   * Disable background delivery for step count updates
+   * @returns A promise that resolves to a boolean indicating success
+   */
+  disableBackgroundDelivery(): Promise<boolean>;
 }
 
 export default requireNativeModule<HealthModule>("Health");

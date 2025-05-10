@@ -95,5 +95,80 @@ public class HealthModule: Module {
       // Execute the query
       self.healthStore.execute(query)
     }
+    
+    // Enable background delivery for step count updates
+    AsyncFunction("enableBackgroundDelivery") { (frequency: String, promise: Promise) in
+      guard HKHealthStore.isHealthDataAvailable() else {
+        promise.reject(
+          "HealthKit unavailable",
+          "HealthKit is not available on this device"
+        )
+        return
+      }
+      
+      // Define step count as the type we want to observe
+      guard let stepCountType = HKQuantityType.quantityType(forIdentifier: .stepCount) else {
+        promise.reject(
+          "Type unavailable",
+          "Step count type is not available"
+        )
+        return
+      }
+      
+      // Convert string frequency to HKUpdateFrequency
+      let updateFrequency: HKUpdateFrequency
+      switch frequency.lowercased() {
+      case "immediate":
+        updateFrequency = .immediate
+      case "hourly":
+        updateFrequency = .hourly
+      case "daily":
+        updateFrequency = .daily
+      case "weekly":
+        updateFrequency = .weekly
+      default:
+        updateFrequency = .hourly  // Default to hourly if not specified correctly
+      }
+      
+      // Enable background delivery using trailing closure syntax
+      self.healthStore.enableBackgroundDelivery(for: stepCountType, frequency: updateFrequency) { success, error in
+        if let error {
+          promise.reject("background_delivery_error", error.localizedDescription)
+          return
+        }
+        
+        promise.resolve(success)
+      }
+    }
+    
+    // Disable background delivery for step count updates
+    AsyncFunction("disableBackgroundDelivery") { (promise: Promise) in
+      guard HKHealthStore.isHealthDataAvailable() else {
+        promise.reject(
+          "HealthKit unavailable",
+          "HealthKit is not available on this device"
+        )
+        return
+      }
+      
+      // Define step count as the type we want to stop observing
+      guard let stepCountType = HKQuantityType.quantityType(forIdentifier: .stepCount) else {
+        promise.reject(
+          "Type unavailable",
+          "Step count type is not available"
+        )
+        return
+      }
+      
+      // Disable background delivery using trailing closure syntax
+      self.healthStore.disableBackgroundDelivery(for: stepCountType) { success, error in
+        if let error {
+          promise.reject("background_delivery_error", error.localizedDescription)
+          return
+        }
+        
+        promise.resolve(success)
+      }
+    }
   }
 }
