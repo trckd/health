@@ -1,16 +1,22 @@
+require 'json'
+
+package = JSON.parse(File.read(File.join(__dir__, '..', 'package.json')))
+
 Pod::Spec.new do |s|
   s.name           = 'Health'
-  s.version        = '1.0.0'
-  s.summary        = 'Integration with HealthKit'
-  s.description    = 'Connect to HealthKit to read and write to health data'
-  s.author         = 'Tracked'
-  s.homepage       = 'https://github.com/tracked'
-  s.license        = { :type => 'MIT', :file => 'LICENSE' }
-  s.source         = { :git => 'https://github.com/tracked-app/tracked.git', :tag => "#{s.version}" }
+  s.version        = package['version']
+  s.summary        = package['description']
+  s.author         = package['author']
+  s.homepage       = package['homepage']
+  s.license        = package['license']
   s.platforms      = {
-    :ios => '15.1',
-    :tvos => '15.1'
+    ios: '15.1',
+    tvos: '15.1'
   }
+
+  s.swift_version  = '5.4'
+  s.source         = { git: 'https://github.com/trckd/health' }
+  s.static_framework = true
 
   s.dependency 'ExpoModulesCore'
   

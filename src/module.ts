@@ -20,7 +20,4 @@ declare class HealthModule
   getStepCount(startDate: Date, endDate: Date): Promise<number>;
 }
 
-const Health = requireNativeModule<HealthModule>("Health");
-
-// Export as a named export instead of default
-export { Health };
+export default requireNativeModule<HealthModule>("Health");

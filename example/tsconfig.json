@@ -1,0 +1,10 @@
+{
+  "extends": "expo/tsconfig.base",
+  "compilerOptions": {
+    "strict": true,
+    "paths": {
+      "@tracked/health": ["../src/index"],
+      "@tracked/health/*": ["../src/*"]
+    }
+  }
+}
