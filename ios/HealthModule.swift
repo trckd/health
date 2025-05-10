@@ -85,17 +85,10 @@ public class HealthModule: Module {
         quantitySamplePredicate: predicate,
         options: .cumulativeSum
       ) { _, result, error in
-        if let error = error {
-          promise.reject("query_error", error.localizedDescription)
-          return
-        }
+        // Get step count or default to 0 if nil
+        let steps = result?.sumQuantity()?.doubleValue(for: HKUnit.count()) ?? 0
         
-        guard let result = result, let sum = result.sumQuantity() else {
-          promise.resolve(0)
-          return
-        }
-        
-        let steps = sum.doubleValue(for: HKUnit.count())
+        // Always resolve with steps (will be 0 if no data or error)
         promise.resolve(steps)
       }
       
