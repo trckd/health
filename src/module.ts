@@ -7,7 +7,13 @@ export interface HealthModuleInterface {
   isHealthDataAvailable: boolean;
   checkHealthDataAvailable(): boolean;
   requestAuthorization(): Promise<boolean>;
-  getStepCount(startDate: Date, endDate: Date): Promise<number>;
+    /**
+   * Get the step count for a specific day
+   * @param startDate - The start date of the day in seconds since epoch
+   * @param endDate - The end date of the day in seconds since epoch
+   * @returns The step count for the day
+   */
+  getStepCount(startDate: number, endDate: number): Promise<number>;
 }
 
 declare class HealthModule
@@ -17,7 +23,13 @@ declare class HealthModule
   isHealthDataAvailable: boolean;
   checkHealthDataAvailable(): boolean;
   requestAuthorization(): Promise<boolean>;
-  getStepCount(startDate: Date, endDate: Date): Promise<number>;
+  /**
+   * Get the step count for a specific day
+   * @param startDate - The start date of the day in seconds since epoch
+   * @param endDate - The end date of the day in seconds since epoch
+   * @returns The step count for the day
+   */
+  getStepCount(startDate: number, endDate: number): Promise<number>;
 }
 
 export default requireNativeModule<HealthModule>("Health");

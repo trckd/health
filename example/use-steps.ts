@@ -22,7 +22,10 @@ export function useSteps(date: string) {
     startTime.setHours(0, 0, 0, 0);
     const endTime = new Date(localDate);
     endTime.setHours(23, 59, 59, 999);
-    return { startTime, endTime };
+    return {
+      startTime: Math.floor(startTime.getTime() / 1000),
+      endTime: Math.floor(endTime.getTime() / 1000)
+    };
   }, []);
 
   const fetchSteps = useCallback(async () => {
