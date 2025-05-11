@@ -1,7 +1,13 @@
 import { NativeModule, requireNativeModule } from "expo-modules-core";
 
-// No events needed for our simplified module
-export type HealthModuleEvents = {};
+export interface StepUpdateEvent {
+  steps: number;
+  date: string;
+}
+
+export type HealthModuleEvents = {
+  onStepDataUpdate: (event: StepUpdateEvent) => void;
+};
 
 // Define the update frequency type
 export type UpdateFrequency = "immediate" | "hourly" | "daily" | "weekly";

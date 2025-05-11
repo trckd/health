@@ -21,7 +21,8 @@
       },
       "infoPlist": {
         "NSHealthShareUsageDescription": "We need access to your health data to track your steps",
-        "NSHealthUpdateUsageDescription": "We need access to your health data to track your steps"
+        "NSHealthUpdateUsageDescription": "We need access to your health data to track your steps",
+        "UIBackgroundModes": ["processing"]
       }
     },
     "android": {

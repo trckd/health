@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 
 // Import the health module with its type
-import { Health as HealthModule } from "@tracked/health";
+import { Health as HealthModule, UpdateFrequency } from "@tracked/health";
+import { StepUpdateEvent } from "@tracked/health/module";
 
 // Define our own status constants to replace the HKAuthorizationRequestStatus
 export enum AuthStatus {
@@ -15,6 +16,7 @@ export function useSteps(date: string) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [authStatus, setAuthStatus] = useState<AuthStatus>(AuthStatus.Unknown);
+  const [backgroundDeliveryStatus, setBackgroundDeliveryStatus] = useState<UpdateFrequency | null>(null);
 
   const getDateRange = useCallback((dateString: string) => {
     const localDate = new Date(dateString + "T00:00:00.000");
@@ -54,6 +56,40 @@ export function useSteps(date: string) {
     }
   }, [date, authStatus, fetchSteps]);
 
+  // Set up background delivery
+  useEffect(() => {
+    if (authStatus === AuthStatus.Authorized) {
+      HealthModule.enableBackgroundDelivery("immediate").then((success) => {
+        if (success) {
+          setBackgroundDeliveryStatus("immediate");
+        } else {
+          setBackgroundDeliveryStatus(null);
+        }
+      });
+    }
+  }, [authStatus]);
+
+  // Listen for step count updates from background delivery
+  useEffect(() => {
+    // Only set up listener if authorized
+    if (authStatus !== AuthStatus.Authorized) return;
+
+    // Add event listener for step updates
+    const subscription = HealthModule.addListener("onStepDataUpdate", (event: StepUpdateEvent) => {
+      // Only update steps if we're looking at today's date
+      const today = new Date().toISOString().split('T')[0];
+      if (date === today) {
+        console.log("Received background step update:", event.steps);
+        setSteps(event.steps);
+      }
+    });
+    
+    // Clean up event listener when component unmounts or date changes
+    return () => {
+      subscription.remove();
+    };
+  }, [date, authStatus]);
+
   const requestInitialization = async () => {
     if (!HealthModule.isHealthDataAvailable) {
       setError("HealthKit is not available on this device");
@@ -66,10 +102,12 @@ export function useSteps(date: string) {
       
       if (authorized) {
         setAuthStatus(AuthStatus.Authorized);
+        await HealthModule.enableBackgroundDelivery("immediate");
         await fetchSteps();
         return true;
       } else {
         setError("Health data access was denied");
+        await HealthModule.disableBackgroundDelivery();
         setAuthStatus(AuthStatus.NotAuthorized);
         return false;
       }
@@ -83,11 +121,27 @@ export function useSteps(date: string) {
     }
   };
 
+  // Function to explicitly disable background delivery
+  const disableBackgroundDelivery = async () => {
+    try {
+      const success = await HealthModule.disableBackgroundDelivery();
+      if (success) {
+        setBackgroundDeliveryStatus(null);
+      }
+      return success;
+    } catch (err) {
+      console.error("Error disabling background delivery:", err);
+      return false;
+    }
+  };
+
   return {
     steps,
     loading,
     error,
     isAuthorized: authStatus === AuthStatus.Authorized,
     requestInitialization,
+    backgroundDeliveryStatus,
+    disableBackgroundDelivery,
   };
 }

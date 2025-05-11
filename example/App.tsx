@@ -2,7 +2,7 @@ import { Button, SafeAreaView, ScrollView, Text, View } from 'react-native';
 import { useSteps } from './use-steps';
 
 export default function App() {
-  const { steps, loading, error, requestInitialization, isAuthorized } = useSteps("2025-05-01");
+  const { steps, loading, error, requestInitialization, isAuthorized, backgroundDeliveryStatus, disableBackgroundDelivery } = useSteps("2025-05-01");
 
   return (
     <SafeAreaView style={styles.container}>
@@ -18,6 +18,15 @@ export default function App() {
           <Button
             title="Request Authorization"
             onPress={requestInitialization}
+          />
+        </Group>
+        <Group name="Background Delivery Status">
+          <Text>{backgroundDeliveryStatus}</Text>
+        </Group>
+        <Group name="Disable Background Delivery">
+          <Button
+            title="Disable Background Delivery"
+            onPress={disableBackgroundDelivery}
           />
         </Group>
         <Group name="Error">
@@ -50,7 +59,8 @@ const styles = {
     marginBottom: 20,
   },
   group: {
-    margin: 20,
+    marginVertical: 5,
+    marginHorizontal: 20,
     backgroundColor: '#fff',
     borderRadius: 10,
     padding: 20,

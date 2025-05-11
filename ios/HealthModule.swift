@@ -4,6 +4,8 @@ import HealthKit
 public class HealthModule: Module {
   // Create a single HealthKit store that can be reused
   private let healthStore = HKHealthStore()
+  private var stepCountObserver: HKObserverQuery?
+  private var observerStarted = false
   
   // Each module class must implement the definition function. The definition consists of components
   // that describes the module's functionality and behavior.
@@ -13,6 +15,9 @@ public class HealthModule: Module {
     // Can be inferred from module's class name, but it's recommended to set it explicitly for clarity.
     // The module will be accessible from `requireNativeModule('Health')` in JavaScript.
     Name("Health")
+
+    // Add events that can be emitted to JavaScript
+    Events("onStepDataUpdate")
 
     // Sets constant properties on the module. Can take a dictionary or a closure that returns a dictionary.
     Constants([
@@ -137,6 +142,51 @@ public class HealthModule: Module {
           return
         }
         
+        // Set up the observer query to handle background updates
+        if success && !self.observerStarted {
+          // Create an observer query
+          let query = HKObserverQuery(sampleType: stepCountType, predicate: nil) { (query, completionHandler, error) in
+            if let error = error {
+              print("Observer query error: \(error.localizedDescription)")
+              completionHandler()
+              return
+            }
+            
+            // Get today's date range
+            let now = Date()
+            let startOfDay = Calendar.current.startOfDay(for: now)
+            let endOfDay = Calendar.current.date(bySettingHour: 23, minute: 59, second: 59, of: now)!
+            
+            // Query for the latest step count
+            let predicate = HKQuery.predicateForSamples(withStart: startOfDay, end: endOfDay, options: .strictStartDate)
+            
+            let statsQuery = HKStatisticsQuery(
+              quantityType: stepCountType,
+              quantitySamplePredicate: predicate,
+              options: .cumulativeSum
+            ) { _, result, queryError in
+              // Get the step count or default to 0
+              let steps = result?.sumQuantity()?.doubleValue(for: HKUnit.count()) ?? 0
+              
+              // Send the updated step count to JS
+              self.sendEvent("onStepDataUpdate", [
+                "steps": steps,
+                "date": ISO8601DateFormatter().string(from: now)
+              ])
+              
+              // Complete the background task
+              completionHandler()
+            }
+            
+            self.healthStore.execute(statsQuery)
+          }
+          
+          // Start the observer query
+          self.healthStore.execute(query)
+          self.stepCountObserver = query
+          self.observerStarted = true
+        }
+        
         promise.resolve(success)
       }
     }
@@ -158,6 +208,13 @@ public class HealthModule: Module {
           "Step count type is not available"
         )
         return
+      }
+      
+      // Stop the observer query if it exists
+      if let query = self.stepCountObserver {
+        self.healthStore.stop(query)
+        self.stepCountObserver = nil
+        self.observerStarted = false
       }
       
       // Disable background delivery using trailing closure syntax
