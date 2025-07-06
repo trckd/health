@@ -9,11 +9,12 @@ import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.PermissionController
+import androidx.health.connect.client.permission.HealthPermission
 import androidx.health.connect.client.records.StepsRecord
 
 class HealthPermissionActivity : ComponentActivity() {
     
-    private lateinit var requestPermissionActivityContract: ActivityResultLauncher<Set<PermissionController.Permission>>
+    private lateinit var requestPermissionActivityContract: ActivityResultLauncher<Set<String>>
     private val healthConnectClient by lazy { HealthConnectClient.getOrCreate(this) }
     
     companion object {
@@ -55,9 +56,9 @@ class HealthPermissionActivity : ComponentActivity() {
         }
     }
     
-    private fun getRequiredPermissions(): Set<PermissionController.Permission> {
+    private fun getRequiredPermissions(): Set<String> {
         return setOf(
-            PermissionController.createReadPermission(StepsRecord::class)
+            HealthPermission.getReadPermission(StepsRecord::class)
         )
     }
 } 

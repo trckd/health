@@ -6,7 +6,10 @@ import android.content.Intent
 import android.util.Log
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.PermissionController
+import androidx.health.connect.client.permission.HealthPermission
 import androidx.health.connect.client.records.StepsRecord
+import androidx.health.connect.client.records.metadata.Device
+import androidx.health.connect.client.records.metadata.Metadata
 import androidx.health.connect.client.request.ReadRecordsRequest
 import androidx.health.connect.client.time.TimeRangeFilter
 import androidx.work.*
@@ -19,6 +22,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import java.time.Instant
 import java.time.ZoneId
+import java.time.ZoneOffset
 import java.util.concurrent.TimeUnit
 
 class HealthModule : Module() {
@@ -60,7 +64,7 @@ class HealthModule : Module() {
       moduleScope.launch {
         try {
           val permissions = setOf(
-            PermissionController.createReadPermission(StepsRecord::class)
+            HealthPermission.getReadPermission(StepsRecord::class)
           )
           
           val granted = healthConnectClient.permissionController.getGrantedPermissions()
@@ -161,7 +165,8 @@ class HealthModule : Module() {
 
   private fun isHealthConnectAvailable(): Boolean {
     return try {
-      when (HealthConnectClient.getSdkStatus(context)) {
+      val providerPackageName = "com.google.android.apps.healthdata"
+      when (HealthConnectClient.getSdkStatus(context, providerPackageName)) {
         HealthConnectClient.SDK_AVAILABLE -> true
         HealthConnectClient.SDK_UNAVAILABLE -> false
         HealthConnectClient.SDK_UNAVAILABLE_PROVIDER_UPDATE_REQUIRED -> false
@@ -192,7 +197,7 @@ class HealthModule : Module() {
           kotlinx.coroutines.delay(2000) // Give user time to interact
           
           val permissions = setOf(
-            PermissionController.createReadPermission(StepsRecord::class)
+            HealthPermission.getReadPermission(StepsRecord::class)
           )
           val granted = healthConnectClient.permissionController.getGrantedPermissions()
           val hasAllPermissions = granted.containsAll(permissions)
@@ -208,7 +213,7 @@ class HealthModule : Module() {
           kotlinx.coroutines.delay(2000)
           
           val permissions = setOf(
-            PermissionController.createReadPermission(StepsRecord::class)
+            HealthPermission.getReadPermission(StepsRecord::class)
           )
           val granted = healthConnectClient.permissionController.getGrantedPermissions()
           val hasAllPermissions = granted.containsAll(permissions)
@@ -252,7 +257,7 @@ class StepDataWorker(
       
       // Check if we have permissions first
       val permissions = setOf(
-        PermissionController.createReadPermission(StepsRecord::class)
+        HealthPermission.getReadPermission(StepsRecord::class)
       )
       val granted = healthConnectClient.permissionController.getGrantedPermissions()
       

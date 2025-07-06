@@ -31,7 +31,10 @@
         "backgroundColor": "#ffffff"
       },
       "edgeToEdgeEnabled": true,
-      "package": "com.trckd.health.example"
+      "package": "com.trckd.health.example",
+      "minSdkVersion": 26,
+      "compileSdkVersion": 35,
+      "targetSdkVersion": 35
     },
     "web": {
       "favicon": "./assets/favicon.png"
