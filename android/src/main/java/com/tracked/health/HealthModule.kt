@@ -35,6 +35,8 @@ class HealthModule : Module() {
     // Static reference to the module instance for WorkManager communication
     @Volatile
     private var moduleInstance: HealthModule? = null
+    
+    fun getInstance(): HealthModule? = moduleInstance
   }
 
   init {
@@ -233,11 +235,6 @@ class HealthModule : Module() {
     } catch (e: Exception) {
       Log.e(TAG, "Error sending step data update event", e)
     }
-  }
-
-  // Static method to get the current module instance
-  companion object {
-    fun getInstance(): HealthModule? = moduleInstance
   }
 }
 
