@@ -52,7 +52,7 @@ dependencies {
     // ... other dependencies
     
     // Health Connect dependencies
-    implementation 'androidx.health.connect:connect-client:1.1.0-alpha07'
+    implementation 'androidx.health.connect:connect-client:1.1.0-rc02'
     implementation 'androidx.work:work-runtime-ktx:2.9.0'
 }
 ```

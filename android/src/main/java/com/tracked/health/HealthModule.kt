@@ -86,8 +86,11 @@ class HealthModule : Module() {
     AsyncFunction("getStepCount") { startDate: Long, endDate: Long, promise: Promise ->
       moduleScope.launch {
         try {
-          val startInstant = Instant.ofEpochSecond(startDate)
-          val endInstant = Instant.ofEpochSecond(endDate)
+          // Convert milliseconds to seconds for proper Instant creation
+          val startInstant = Instant.ofEpochMilli(startDate)
+          val endInstant = Instant.ofEpochMilli(endDate)
+          
+          Log.d(TAG, "Querying steps from $startInstant to $endInstant (input: $startDate to $endDate)")
           
           val request = ReadRecordsRequest(
             recordType = StepsRecord::class,
@@ -98,7 +101,7 @@ class HealthModule : Module() {
           
           val totalSteps = response.records.sumOf { it.count }
           
-          Log.d(TAG, "Retrieved $totalSteps steps for period ${startInstant} to ${endInstant}")
+          Log.d(TAG, "Retrieved $totalSteps steps for period ${startInstant} to ${endInstant} (${response.records.size} records)")
           promise.resolve(totalSteps.toDouble())
         } catch (e: Exception) {
           Log.e(TAG, "Error getting step count", e)
