@@ -1,6 +1,6 @@
 {
   "name": "@tracked/health",
-  "version": "0.0.10",
+  "version": "0.0.11",
   "description": "Health module",
   "main": "build/index.js",
   "types": "build/index.d.ts",
@@ -38,7 +38,7 @@
   "dependencies": {},
   "devDependencies": {
     "@types/react": "~19.0.0",
-    "expo-modules-core": "^2.3.13",
+    "expo-modules-core": "^3.0.18",
     "expo-module-scripts": "^4.1.6",
     "expo": "~53.0.0",
     "react-native": "0.79.1"

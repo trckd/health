@@ -3,7 +3,6 @@
     
     <!-- Health Connect permissions -->
     <uses-permission android:name="android.permission.health.READ_STEPS" />
-    <uses-permission android:name="android.permission.health.WRITE_STEPS" />
     
     <!-- Health Connect intent filters -->
     <queries>

@@ -35,13 +35,16 @@ class HealthModule : Module() {
   companion object {
     private const val WORK_NAME = "HealthStepDataSync"
     private const val TAG = "HealthModule"
-    
+
     // Static reference to the module instance for WorkManager communication
     @Volatile
     private var moduleInstance: HealthModule? = null
-    
+
     fun getInstance(): HealthModule? = moduleInstance
   }
+
+  // Store pending permission promise to resolve later
+  private var pendingPermissionPromise: Promise? = null
 
   init {
     moduleInstance = this
@@ -66,15 +69,15 @@ class HealthModule : Module() {
           val permissions = setOf(
             HealthPermission.getReadPermission(StepsRecord::class)
           )
-          
+
           val granted = healthConnectClient.permissionController.getGrantedPermissions()
-          
+
           if (granted.containsAll(permissions)) {
             Log.i(TAG, "Health Connect permissions already granted")
             promise.resolve(true)
           } else {
             Log.i(TAG, "Requesting Health Connect permissions")
-            requestHealthConnectPermissions(promise)
+            requestHealthConnectPermissions(permissions, promise)
           }
         } catch (e: Exception) {
           Log.e(TAG, "Error requesting authorization", e)
@@ -181,53 +184,61 @@ class HealthModule : Module() {
     }
   }
 
-  private fun requestHealthConnectPermissions(promise: Promise) {
+  private fun requestHealthConnectPermissions(permissions: Set<String>, promise: Promise) {
+    try {
+      val currentActivity = appContext.currentActivity
+      if (currentActivity == null) {
+        Log.e(TAG, "No current activity available for permission request")
+        promise.resolve(false)
+        return
+      }
+
+      // Store the promise for later resolution
+      pendingPermissionPromise = promise
+
+      // Use the proper permission contract for Android 14+ compatibility
+      val requestPermissionContract = PermissionController.createRequestPermissionResultContract()
+
+      if (currentActivity is androidx.activity.ComponentActivity) {
+        val launcher = (currentActivity as androidx.activity.ComponentActivity)
+          .registerForActivityResult(requestPermissionContract) { grantedPermissions ->
+            val hasAllPermissions = grantedPermissions.containsAll(permissions)
+            Log.i(TAG, "Permission result received: $hasAllPermissions")
+
+            pendingPermissionPromise?.resolve(hasAllPermissions)
+            pendingPermissionPromise = null
+          }
+
+        launcher.launch(permissions)
+      } else {
+        // Fallback for older activity types
+        Log.w(TAG, "Activity is not ComponentActivity, using fallback method")
+        requestHealthConnectPermissionsFallback(permissions, promise)
+      }
+
+    } catch (e: Exception) {
+      Log.e(TAG, "Error requesting Health Connect permissions", e)
+      pendingPermissionPromise?.resolve(false)
+      pendingPermissionPromise = null
+    }
+  }
+
+  private fun requestHealthConnectPermissionsFallback(permissions: Set<String>, promise: Promise) {
     try {
       // Launch the permission activity
       val intent = Intent(context, HealthPermissionActivity::class.java).apply {
         addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        putStringArrayListExtra("required_permissions", ArrayList(permissions))
       }
-      
-      // Start the activity and handle the result
+
       val currentActivity = appContext.currentActivity
-      if (currentActivity != null) {
-        // If we have an activity context, use it
-        currentActivity.startActivity(intent)
-        
-        // Since we can't get the result directly in this context,
-        // we'll check permissions after a delay
-        moduleScope.launch {
-          kotlinx.coroutines.delay(2000) // Give user time to interact
-          
-          val permissions = setOf(
-            HealthPermission.getReadPermission(StepsRecord::class)
-          )
-          val granted = healthConnectClient.permissionController.getGrantedPermissions()
-          val hasAllPermissions = granted.containsAll(permissions)
-          
-          Log.i(TAG, "Permission check after request: $hasAllPermissions")
-          promise.resolve(hasAllPermissions)
-        }
-      } else {
-        // Fallback: start with application context
-        context.startActivity(intent)
-        
-        moduleScope.launch {
-          kotlinx.coroutines.delay(2000)
-          
-          val permissions = setOf(
-            HealthPermission.getReadPermission(StepsRecord::class)
-          )
-          val granted = healthConnectClient.permissionController.getGrantedPermissions()
-          val hasAllPermissions = granted.containsAll(permissions)
-          
-          Log.i(TAG, "Permission check after request (fallback): $hasAllPermissions")
-          promise.resolve(hasAllPermissions)
-        }
-      }
-      
+      currentActivity?.startActivity(intent) ?: context.startActivity(intent)
+
+      // Store promise to be resolved by the activity result
+      pendingPermissionPromise = promise
+
     } catch (e: Exception) {
-      Log.e(TAG, "Error requesting Health Connect permissions", e)
+      Log.e(TAG, "Error requesting Health Connect permissions (fallback)", e)
       promise.resolve(false)
     }
   }
@@ -243,6 +254,13 @@ class HealthModule : Module() {
     } catch (e: Exception) {
       Log.e(TAG, "Error sending step data update event", e)
     }
+  }
+
+  // Resolve pending permission promises from HealthPermissionActivity
+  internal fun resolvePermissionResult(granted: Boolean) {
+    Log.d(TAG, "Resolving permission result: $granted")
+    pendingPermissionPromise?.resolve(granted)
+    pendingPermissionPromise = null
   }
 }
 

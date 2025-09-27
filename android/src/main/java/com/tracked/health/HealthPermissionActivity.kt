@@ -24,33 +24,47 @@ class HealthPermissionActivity : ComponentActivity() {
     
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        
+
+        // Get required permissions from intent or use default
+        val requiredPermissions = intent.getStringArrayListExtra("required_permissions")?.toSet()
+            ?: getRequiredPermissions()
+
         // Set up the permission request launcher
         requestPermissionActivityContract = registerForActivityResult(
             PermissionController.createRequestPermissionResultContract()
-        ) { granted ->
-            Log.d(TAG, "Permission result received: $granted")
-            
+        ) { grantedPermissions ->
+            Log.d(TAG, "Permission result received: $grantedPermissions")
+
+            val hasAllPermissions = grantedPermissions.containsAll(requiredPermissions)
+            Log.d(TAG, "All permissions granted: $hasAllPermissions")
+
+            // Notify the module instance about the result
+            val moduleInstance = HealthModule.getInstance()
+            moduleInstance?.resolvePermissionResult(hasAllPermissions)
+
             // Set result and finish
             val resultIntent = Intent().apply {
-                putExtra(EXTRA_PERMISSIONS_GRANTED, granted.containsAll(getRequiredPermissions()))
+                putExtra(EXTRA_PERMISSIONS_GRANTED, hasAllPermissions)
             }
             setResult(Activity.RESULT_OK, resultIntent)
             finish()
         }
-        
+
         // Start permission request immediately
-        requestPermissions()
+        requestPermissions(requiredPermissions)
     }
     
-    private fun requestPermissions() {
-        val permissions = getRequiredPermissions()
-        
+    private fun requestPermissions(permissions: Set<String>) {
         try {
             Log.d(TAG, "Requesting Health Connect permissions: $permissions")
             requestPermissionActivityContract.launch(permissions)
         } catch (e: Exception) {
             Log.e(TAG, "Error launching permission request", e)
+
+            // Notify the module instance about the failure
+            val moduleInstance = HealthModule.getInstance()
+            moduleInstance?.resolvePermissionResult(false)
+
             setResult(Activity.RESULT_CANCELED)
             finish()
         }
