@@ -25,8 +25,8 @@ export function useSteps(date: string) {
     const endTime = new Date(localDate);
     endTime.setHours(23, 59, 59, 999);
     return {
-      startTime: Math.floor(startTime.getTime() / 1000),
-      endTime: Math.floor(endTime.getTime() / 1000)
+      startTime: startTime.getTime(),
+      endTime: endTime.getTime()
     };
   }, []);
 

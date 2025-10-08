@@ -45,9 +45,9 @@
       <true/>
     </dict>
     <key>NSHealthShareUsageDescription</key>
-    <string>We need access to your health data to track your steps</string>
+    <string>We need access to your health data to track your steps and body weight</string>
     <key>NSHealthUpdateUsageDescription</key>
-    <string>We need access to your health data to track your steps</string>
+    <string>We need access to your health data to track your steps and body weight</string>
     <key>UIBackgroundModes</key>
     <array>
       <string>health-kit</string>

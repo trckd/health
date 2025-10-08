@@ -1,3 +1,11 @@
 // Export the native module directly
-export type { HealthModuleEvents, HealthModuleInterface, UpdateFrequency } from "./module";
+export type {
+  BodyWeightSample,
+  BodyWeightUpdateEvent,
+  HealthModuleEvents,
+  HealthModuleInterface,
+  HealthSubscription,
+  StepUpdateEvent,
+  UpdateFrequency,
+} from "./module";
 export { default as Health } from "./module";

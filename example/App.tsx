@@ -1,39 +1,50 @@
 import { Button, SafeAreaView, ScrollView, Text, View } from 'react-native';
 import { useSteps } from './use-steps';
+import { useBodyWeight } from './use-body-weight';
+
+const DEMO_DATE = "2025-05-01";
 
 export default function App() {
-  const { steps, loading, error, requestInitialization, isAuthorized, backgroundDeliveryStatus, disableBackgroundDelivery } = useSteps("2025-05-01");
+  const {
+    steps,
+    loading: stepsLoading,
+    error: stepsError,
+    requestInitialization,
+    isAuthorized,
+    backgroundDeliveryStatus,
+    disableBackgroundDelivery,
+  } = useSteps(DEMO_DATE);
+
+  const {
+    displayValue: bodyWeight,
+    loading: weightLoading,
+    error: weightError,
+    refresh: refreshBodyWeight,
+  } = useBodyWeight(DEMO_DATE, { units: 'kg' });
 
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView style={styles.container}>
-        <Text style={styles.header}>Steps API Example</Text>
+        <Text style={styles.header}>Health Data Example</Text>
+
+        <Group name="Authorization">
+          <Text>{isAuthorized ? 'Authorized' : 'Not authorized'}</Text>
+          <Button title="Request Authorization" onPress={requestInitialization} />
+        </Group>
+
         <Group name="Steps">
-          <Text>{steps}</Text>
+          <Text>Total: {steps}</Text>
+          <Text>Status: {stepsLoading ? 'Loading…' : 'Idle'}</Text>
+          <Text>Error: {stepsError ?? '—'}</Text>
+          <Text>Background: {backgroundDeliveryStatus ?? 'Disabled'}</Text>
+          <Button title="Disable Background Delivery" onPress={disableBackgroundDelivery} />
         </Group>
-        <Group name="Loading">
-          <Text>{loading ? "Loading..." : "Not loading"}</Text>
-        </Group>
-        <Group name="Request Authorization">
-          <Button
-            title="Request Authorization"
-            onPress={requestInitialization}
-          />
-        </Group>
-        <Group name="Background Delivery Status">
-          <Text>{backgroundDeliveryStatus}</Text>
-        </Group>
-        <Group name="Disable Background Delivery">
-          <Button
-            title="Disable Background Delivery"
-            onPress={disableBackgroundDelivery}
-          />
-        </Group>
-        <Group name="Error">
-          <Text>{error}</Text>
-        </Group>
-        <Group name="Is Authorized">
-          <Text>{isAuthorized ? "Authorized" : "Not authorized"}</Text>
+
+        <Group name="Body Weight (kg)">
+          <Text>Value: {bodyWeight ?? 'No entry'}</Text>
+          <Text>Status: {weightLoading ? 'Syncing…' : 'Idle'}</Text>
+          <Text>Error: {weightError ?? '—'}</Text>
+          <Button title="Refresh" onPress={refreshBodyWeight} />
         </Group>
       </ScrollView>
     </SafeAreaView>
@@ -64,13 +75,10 @@ const styles = {
     backgroundColor: '#fff',
     borderRadius: 10,
     padding: 20,
+    gap: 8,
   },
   container: {
     flex: 1,
     backgroundColor: '#eee',
-  },
-  view: {
-    flex: 1,
-    height: 200,
   },
 };

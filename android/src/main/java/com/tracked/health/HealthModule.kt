@@ -1,63 +1,81 @@
 package com.tracked.health
 
-import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.util.Log
 import androidx.health.connect.client.HealthConnectClient
-import androidx.health.connect.client.PermissionController
 import androidx.health.connect.client.permission.HealthPermission
 import androidx.health.connect.client.records.StepsRecord
-import androidx.health.connect.client.records.metadata.Device
-import androidx.health.connect.client.records.metadata.Metadata
+import androidx.health.connect.client.records.WeightRecord
 import androidx.health.connect.client.request.ReadRecordsRequest
 import androidx.health.connect.client.time.TimeRangeFilter
-import androidx.work.*
-import expo.modules.kotlin.modules.Module
-import expo.modules.kotlin.modules.ModuleDefinition
 import expo.modules.kotlin.Promise
 import expo.modules.kotlin.exception.Exceptions
+import expo.modules.kotlin.modules.Module
+import expo.modules.kotlin.modules.ModuleDefinition
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.lang.ref.WeakReference
 import java.time.Instant
-import java.time.ZoneId
-import java.time.ZoneOffset
-import java.util.concurrent.TimeUnit
+import java.util.ArrayList
 
 class HealthModule : Module() {
   private val context: Context
     get() = appContext.reactContext ?: throw Exceptions.ReactContextLost()
 
   private val healthConnectClient by lazy { HealthConnectClient.getOrCreate(context) }
-  private val moduleScope = CoroutineScope(Dispatchers.Main)
+  private val moduleScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+  private val ioDispatcher = Dispatchers.IO
 
   companion object {
-    private const val WORK_NAME = "HealthStepDataSync"
     private const val TAG = "HealthModule"
 
-    // Static reference to the module instance for WorkManager communication
     @Volatile
-    private var moduleInstance: HealthModule? = null
+    private var moduleInstance: WeakReference<HealthModule>? = null
 
-    fun getInstance(): HealthModule? = moduleInstance
+    fun getInstance(): HealthModule? = moduleInstance?.get()
+
+    internal fun setInstance(instance: HealthModule) {
+      moduleInstance = WeakReference(instance)
+    }
+
+    internal fun clearInstance() {
+      moduleInstance = null
+    }
   }
 
-  // Store pending permission promise to resolve later
   private var pendingPermissionPromise: Promise? = null
-
-  init {
-    moduleInstance = this
-  }
 
   override fun definition() = ModuleDefinition {
     Name("Health")
 
-    Events("onStepDataUpdate")
+    Events("onStepDataUpdate", "onBodyWeightDataUpdate")
+
+    Function("addListener") { _: String, _: Any? ->
+      // Required for EventEmitter compliance
+    }
+
+    Function("removeListeners") { _: Int ->
+      // Required for EventEmitter compliance
+    }
 
     Constants(
       "isHealthDataAvailable" to isHealthConnectAvailable()
     )
+
+    OnCreate {
+      setInstance(this@HealthModule)
+    }
+
+    OnDestroy {
+      // Clean up any pending promises to prevent memory leaks
+      pendingPermissionPromise?.reject("module_destroyed", "Health module was destroyed", null)
+      pendingPermissionPromise = null
+      clearInstance()
+    }
 
     Function("checkHealthDataAvailable") {
       return@Function isHealthConnectAvailable()
@@ -67,17 +85,20 @@ class HealthModule : Module() {
       moduleScope.launch {
         try {
           val permissions = setOf(
-            HealthPermission.getReadPermission(StepsRecord::class)
+            HealthPermission.getReadPermission(StepsRecord::class),
+            HealthPermission.getReadPermission(WeightRecord::class)
           )
 
-          val granted = healthConnectClient.permissionController.getGrantedPermissions()
+          val granted = withContext(ioDispatcher) {
+            healthConnectClient.permissionController.getGrantedPermissions()
+          }
 
           if (granted.containsAll(permissions)) {
             Log.i(TAG, "Health Connect permissions already granted")
             promise.resolve(true)
           } else {
             Log.i(TAG, "Requesting Health Connect permissions")
-            requestHealthConnectPermissions(permissions, promise)
+            launchPermissionActivity(permissions, promise)
           }
         } catch (e: Exception) {
           Log.e(TAG, "Error requesting authorization", e)
@@ -89,27 +110,70 @@ class HealthModule : Module() {
     AsyncFunction("getStepCount") { startDate: Long, endDate: Long, promise: Promise ->
       moduleScope.launch {
         try {
-          // Convert milliseconds to seconds for proper Instant creation
           val startInstant = Instant.ofEpochMilli(startDate)
           val endInstant = Instant.ofEpochMilli(endDate)
-          
+
           Log.d(TAG, "Querying steps from $startInstant to $endInstant (input: $startDate to $endDate)")
-          
-          val request = ReadRecordsRequest(
-            recordType = StepsRecord::class,
-            timeRangeFilter = TimeRangeFilter.between(startInstant, endInstant)
-          )
-          
-          val response = healthConnectClient.readRecords(request)
-          
-          val totalSteps = response.records.sumOf { it.count }
-          
-          Log.d(TAG, "Retrieved $totalSteps steps for period ${startInstant} to ${endInstant} (${response.records.size} records)")
-          promise.resolve(totalSteps.toDouble())
+
+          val (totalSteps, recordCount) = withContext(ioDispatcher) {
+            val request = ReadRecordsRequest(
+              recordType = StepsRecord::class,
+              timeRangeFilter = TimeRangeFilter.between(startInstant, endInstant)
+            )
+
+            val response = healthConnectClient.readRecords(request)
+            response.records.sumOf { it.count }.toDouble() to response.records.size
+          }
+
+          Log.d(TAG, "Retrieved $totalSteps steps for period ${startInstant} to ${endInstant} ($recordCount records)")
+          promise.resolve(totalSteps)
         } catch (e: Exception) {
           Log.e(TAG, "Error getting step count", e)
-          // Return 0 instead of rejecting to match iOS behavior
           promise.resolve(0.0)
+        }
+      }
+    }
+
+    AsyncFunction("getBodyWeightSamples") { startDate: Long, endDate: Long, promise: Promise ->
+      moduleScope.launch {
+        try {
+          val startInstant = Instant.ofEpochMilli(startDate)
+          val endInstant = Instant.ofEpochMilli(endDate)
+
+          val samples = withContext(ioDispatcher) {
+            val request = ReadRecordsRequest(
+              recordType = WeightRecord::class,
+              timeRangeFilter = TimeRangeFilter.between(startInstant, endInstant)
+            )
+
+            val response = healthConnectClient.readRecords(request)
+            response.records.sortedBy { it.time }.map { mapWeightRecord(it) }
+          }
+
+          promise.resolve(samples)
+        } catch (e: Exception) {
+          Log.e(TAG, "Error reading body weight samples", e)
+          promise.reject("body_weight_read_error", e.message, e)
+        }
+      }
+    }
+
+    AsyncFunction("getLatestBodyWeight") { promise: Promise ->
+      moduleScope.launch {
+        try {
+          val latest = withContext(ioDispatcher) {
+            val request = ReadRecordsRequest(
+              recordType = WeightRecord::class,
+              timeRangeFilter = TimeRangeFilter.between(Instant.EPOCH, Instant.now())
+            )
+            val response = healthConnectClient.readRecords(request)
+            response.records.maxByOrNull { it.time }?.let { mapWeightRecord(it) }
+          }
+
+          promise.resolve(latest)
+        } catch (e: Exception) {
+          Log.e(TAG, "Error reading latest body weight", e)
+          promise.reject("body_weight_read_error", e.message, e)
         }
       }
     }
@@ -117,35 +181,16 @@ class HealthModule : Module() {
     AsyncFunction("enableBackgroundDelivery") { frequency: String, promise: Promise ->
       moduleScope.launch {
         try {
-          val workManager = WorkManager.getInstance(context)
-          
-          // Convert frequency to work interval
-          val (interval, timeUnit) = when (frequency.lowercase()) {
-            "immediate" -> Pair(15L, TimeUnit.MINUTES) // Minimum interval for WorkManager
-            "hourly" -> Pair(1L, TimeUnit.HOURS)
-            "daily" -> Pair(1L, TimeUnit.DAYS)
-            "weekly" -> Pair(7L, TimeUnit.DAYS)
-            else -> Pair(1L, TimeUnit.HOURS)
+          val result = withContext(ioDispatcher) {
+            HealthBackgroundSync.enable(context.applicationContext, frequency)
           }
-          
-          val constraints = Constraints.Builder()
-            .setRequiredNetworkType(NetworkType.NOT_REQUIRED)
-            .setRequiresBatteryNotLow(false)
-            .build()
-          
-          val workRequest = PeriodicWorkRequestBuilder<StepDataWorker>(interval, timeUnit)
-            .setConstraints(constraints)
-            .addTag(WORK_NAME)
-            .build()
-          
-          workManager.enqueueUniquePeriodicWork(
-            WORK_NAME,
-            ExistingPeriodicWorkPolicy.REPLACE,
-            workRequest
-          )
-          
-          Log.i(TAG, "Background delivery enabled with frequency: $frequency")
-          promise.resolve(true)
+
+          if (result) {
+            HealthBackgroundSync.scheduleSync(context.applicationContext, immediate = true)
+          }
+
+          Log.i(TAG, "Background delivery enabled with Health Connect change notifications (frequency hint: $frequency)")
+          promise.resolve(result)
         } catch (e: Exception) {
           Log.e(TAG, "Error enabling background delivery", e)
           promise.reject("background_delivery_error", e.message, e)
@@ -156,14 +201,51 @@ class HealthModule : Module() {
     AsyncFunction("disableBackgroundDelivery") { promise: Promise ->
       moduleScope.launch {
         try {
-          val workManager = WorkManager.getInstance(context)
-          workManager.cancelUniqueWork(WORK_NAME)
-          
+          val result = withContext(ioDispatcher) {
+            HealthBackgroundSync.disable(context.applicationContext)
+          }
+
           Log.i(TAG, "Background delivery disabled")
-          promise.resolve(true)
+          promise.resolve(result)
         } catch (e: Exception) {
           Log.e(TAG, "Error disabling background delivery", e)
           promise.reject("background_delivery_error", e.message, e)
+        }
+      }
+    }
+
+    AsyncFunction("enableBodyWeightUpdates") { frequency: String, promise: Promise ->
+      moduleScope.launch {
+        try {
+          val result = withContext(ioDispatcher) {
+            BodyWeightBackgroundSync.enable(context.applicationContext, frequency)
+          }
+
+          if (result) {
+            BodyWeightBackgroundSync.scheduleSync(context.applicationContext, immediate = true)
+          }
+
+          Log.i(TAG, "Bodyweight background updates enabled (frequency hint: $frequency)")
+          promise.resolve(result)
+        } catch (e: Exception) {
+          Log.e(TAG, "Error enabling bodyweight updates", e)
+          promise.reject("body_weight_delivery_error", e.message, e)
+        }
+      }
+    }
+
+    AsyncFunction("disableBodyWeightUpdates") { promise: Promise ->
+      moduleScope.launch {
+        try {
+          val result = withContext(ioDispatcher) {
+            BodyWeightBackgroundSync.disable(context.applicationContext)
+          }
+
+          Log.i(TAG, "Bodyweight background updates disabled")
+          promise.resolve(result)
+        } catch (e: Exception) {
+          Log.e(TAG, "Error disabling bodyweight updates", e)
+          promise.reject("body_weight_delivery_error", e.message, e)
         }
       }
     }
@@ -184,48 +266,8 @@ class HealthModule : Module() {
     }
   }
 
-  private fun requestHealthConnectPermissions(permissions: Set<String>, promise: Promise) {
+  private fun launchPermissionActivity(permissions: Set<String>, promise: Promise) {
     try {
-      val currentActivity = appContext.currentActivity
-      if (currentActivity == null) {
-        Log.e(TAG, "No current activity available for permission request")
-        promise.resolve(false)
-        return
-      }
-
-      // Store the promise for later resolution
-      pendingPermissionPromise = promise
-
-      // Use the proper permission contract for Android 14+ compatibility
-      val requestPermissionContract = PermissionController.createRequestPermissionResultContract()
-
-      if (currentActivity is androidx.activity.ComponentActivity) {
-        val launcher = (currentActivity as androidx.activity.ComponentActivity)
-          .registerForActivityResult(requestPermissionContract) { grantedPermissions ->
-            val hasAllPermissions = grantedPermissions.containsAll(permissions)
-            Log.i(TAG, "Permission result received: $hasAllPermissions")
-
-            pendingPermissionPromise?.resolve(hasAllPermissions)
-            pendingPermissionPromise = null
-          }
-
-        launcher.launch(permissions)
-      } else {
-        // Fallback for older activity types
-        Log.w(TAG, "Activity is not ComponentActivity, using fallback method")
-        requestHealthConnectPermissionsFallback(permissions, promise)
-      }
-
-    } catch (e: Exception) {
-      Log.e(TAG, "Error requesting Health Connect permissions", e)
-      pendingPermissionPromise?.resolve(false)
-      pendingPermissionPromise = null
-    }
-  }
-
-  private fun requestHealthConnectPermissionsFallback(permissions: Set<String>, promise: Promise) {
-    try {
-      // Launch the permission activity
       val intent = Intent(context, HealthPermissionActivity::class.java).apply {
         addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         putStringArrayListExtra("required_permissions", ArrayList(permissions))
@@ -233,17 +275,23 @@ class HealthModule : Module() {
 
       val currentActivity = appContext.currentActivity
       currentActivity?.startActivity(intent) ?: context.startActivity(intent)
-
-      // Store promise to be resolved by the activity result
       pendingPermissionPromise = promise
-
     } catch (e: Exception) {
-      Log.e(TAG, "Error requesting Health Connect permissions (fallback)", e)
+      Log.e(TAG, "Error requesting Health Connect permissions", e)
       promise.resolve(false)
     }
   }
 
-  // Helper function to send step data update events
+  private fun mapWeightRecord(record: WeightRecord): Map<String, Any?> {
+    val timeMs = record.time.toEpochMilli()
+    return mapOf(
+      "value" to record.weight.inKilograms,
+      "time" to timeMs,
+      "isoDate" to Instant.ofEpochMilli(timeMs).toString(),
+      "source" to record.metadata.dataOrigin.packageName
+    )
+  }
+
   internal fun sendStepDataUpdate(steps: Double, date: String) {
     try {
       sendEvent("onStepDataUpdate", mapOf(
@@ -256,84 +304,26 @@ class HealthModule : Module() {
     }
   }
 
-  // Resolve pending permission promises from HealthPermissionActivity
+  internal fun sendBodyWeightUpdate(valueKg: Double, timeMs: Long, isoDate: String, source: String) {
+    try {
+      sendEvent(
+        "onBodyWeightDataUpdate",
+        mapOf(
+          "value" to valueKg,
+          "time" to timeMs,
+          "isoDate" to isoDate,
+          "source" to source
+        )
+      )
+      Log.d(TAG, "Sent bodyweight update event: $valueKg kg")
+    } catch (e: Exception) {
+      Log.e(TAG, "Error sending bodyweight update event", e)
+    }
+  }
+
   internal fun resolvePermissionResult(granted: Boolean) {
     Log.d(TAG, "Resolving permission result: $granted")
     pendingPermissionPromise?.resolve(granted)
     pendingPermissionPromise = null
   }
 }
-
-// WorkManager worker for background step data sync
-class StepDataWorker(
-  context: Context,
-  workerParams: WorkerParameters
-) : CoroutineWorker(context, workerParams) {
-
-  private val healthConnectClient by lazy { HealthConnectClient.getOrCreate(applicationContext) }
-
-  override suspend fun doWork(): Result {
-    return try {
-      Log.d("StepDataWorker", "Starting background step data sync")
-      
-      // Check if we have permissions first
-      val permissions = setOf(
-        HealthPermission.getReadPermission(StepsRecord::class)
-      )
-      val granted = healthConnectClient.permissionController.getGrantedPermissions()
-      
-      if (!granted.containsAll(permissions)) {
-        Log.w("StepDataWorker", "Health Connect permissions not granted, skipping sync")
-        return Result.failure()
-      }
-      
-      // Get today's steps
-      val now = System.currentTimeMillis()
-      val startOfDay = getStartOfDay(now)
-      val endOfDay = getEndOfDay(now)
-      
-      val request = ReadRecordsRequest(
-        recordType = StepsRecord::class,
-        timeRangeFilter = TimeRangeFilter.between(
-          Instant.ofEpochMilli(startOfDay),
-          Instant.ofEpochMilli(endOfDay)
-        )
-      )
-      
-      val response = healthConnectClient.readRecords(request)
-      val totalSteps = response.records.sumOf { it.count }
-      
-      Log.d("StepDataWorker", "Retrieved $totalSteps steps for today")
-      
-      // Send the update event through the module instance
-      val moduleInstance = HealthModule.getInstance()
-      if (moduleInstance != null) {
-        val dateString = Instant.ofEpochMilli(now).toString()
-        moduleInstance.sendStepDataUpdate(totalSteps.toDouble(), dateString)
-        Log.d("StepDataWorker", "Sent step data update event")
-      } else {
-        Log.w("StepDataWorker", "Module instance not available, cannot send event")
-      }
-      
-      Result.success()
-    } catch (e: Exception) {
-      Log.e("StepDataWorker", "Error syncing step data", e)
-      Result.retry()
-    }
-  }
-
-  private fun getStartOfDay(timestamp: Long): Long {
-    val instant = Instant.ofEpochMilli(timestamp)
-    val zonedDateTime = instant.atZone(ZoneId.systemDefault())
-    val startOfDay = zonedDateTime.toLocalDate().atStartOfDay(ZoneId.systemDefault())
-    return startOfDay.toInstant().toEpochMilli()
-  }
-
-  private fun getEndOfDay(timestamp: Long): Long {
-    val instant = Instant.ofEpochMilli(timestamp)
-    val zonedDateTime = instant.atZone(ZoneId.systemDefault())
-    val endOfDay = zonedDateTime.toLocalDate().atTime(23, 59, 59, 999_999_999)
-      .atZone(ZoneId.systemDefault())
-    return endOfDay.toInstant().toEpochMilli()
-  }
-} 

@@ -5,6 +5,7 @@ A cross-platform Expo module for accessing health data on iOS (HealthKit) and An
 ## Features
 
 - ✅ **Step Count Tracking**: Get daily step counts
+- ✅ **Body Weight Sync**: Read daily bodyweight entries alongside step data
 - ✅ **Background Delivery**: Real-time updates when step data changes
 - ✅ **Cross-Platform**: Works on both iOS and Android
 - ✅ **TypeScript Support**: Full type safety
@@ -40,19 +41,25 @@ if (Health.isHealthDataAvailable) {
     const endOfDay = new Date(today.setHours(23, 59, 59, 999));
     
     const steps = await Health.getStepCount(
-      Math.floor(startOfDay.getTime() / 1000),
-      Math.floor(endOfDay.getTime() / 1000)
+      startOfDay.getTime(),
+      endOfDay.getTime()
     );
-    
+
     console.log(`Today's steps: ${steps}`);
-    
+
+    const latestWeight = await Health.getLatestBodyWeight();
+    if (latestWeight) {
+      console.log(`Most recent weight: ${latestWeight.value}kg`);
+    }
+
     // Enable background delivery
     await Health.enableBackgroundDelivery('hourly');
-    
-    // Listen for step updates
+
+    // Listen for updates
     Health.addListener('onStepDataUpdate', (event) => {
       console.log('Steps updated:', event.steps);
     });
+
   }
 }
 ```
@@ -75,9 +82,21 @@ Requests permission to access health data. Returns `true` if authorized.
 #### `getStepCount(startDate: number, endDate: number): Promise<number>`
 Gets the step count for a specific time range.
 
-- `startDate`: Start timestamp in seconds since epoch
-- `endDate`: End timestamp in seconds since epoch
+- `startDate`: Start timestamp in milliseconds since epoch
+- `endDate`: End timestamp in milliseconds since epoch
 - Returns: Total step count for the time range
+
+#### `getBodyWeightSamples(startDate: number, endDate: number): Promise<BodyWeightSample[]>`
+Returns body weight samples for the provided range (timestamps in milliseconds).
+
+- `startDate`: Start timestamp in milliseconds since epoch
+- `endDate`: End timestamp in milliseconds since epoch
+- Returns: Array of weight samples sorted ascending
+
+#### `getLatestBodyWeight(): Promise<BodyWeightSample | null>`
+Fetches the most recent weight entry or `null` if none exist.
+
+The current implementation targets read-only access so that it remains compatible with older Health Connect releases.
 
 #### `enableBackgroundDelivery(frequency: UpdateFrequency): Promise<boolean>`
 Enables background delivery of step data updates.
@@ -108,6 +127,22 @@ interface StepUpdateEvent {
 }
 ```
 
+### Types
+
+```typescript
+interface StepUpdateEvent {
+  steps: number;
+  date: string;
+}
+
+interface BodyWeightSample {
+  value: number; // kilograms
+  time: number; // epoch milliseconds
+  isoDate: string; // ISO 8601 timestamp
+  source?: string;
+}
+```
+
 ## Platform-Specific Setup
 
 ### iOS (HealthKit)
@@ -116,9 +151,9 @@ Add the following to your `ios/YourApp/Info.plist`:
 
 ```xml
 <key>NSHealthShareUsageDescription</key>
-<string>This app needs access to health data to track your daily steps.</string>
+<string>This app needs access to your step count and body weight to keep your daily logs in sync.</string>
 <key>NSHealthUpdateUsageDescription</key>
-<string>This app needs access to health data to track your daily steps.</string>
+<string>This app reads your step count and body weight to keep your daily logs in sync.</string>
 ```
 
 ### Android (Health Connect)
@@ -127,7 +162,7 @@ Add the following to your `ios/YourApp/Info.plist`:
 
 ```xml
 <uses-permission android:name="android.permission.health.READ_STEPS" />
-<uses-permission android:name="android.permission.health.WRITE_STEPS" />
+<uses-permission android:name="android.permission.health.READ_WEIGHT" />
 
 <queries>
     <package android:name="com.google.android.apps.healthdata" />

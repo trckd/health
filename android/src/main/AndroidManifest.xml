@@ -3,6 +3,7 @@
     
     <!-- Health Connect permissions -->
     <uses-permission android:name="android.permission.health.READ_STEPS" />
+    <uses-permission android:name="android.permission.health.READ_WEIGHT" />
     
     <!-- Health Connect intent filters -->
     <queries>
@@ -41,5 +42,14 @@
                 <category android:name="android.intent.category.HEALTH_PERMISSIONS" />
             </intent-filter>
         </activity-alias>
+
+        <!-- Receive Health Connect change notifications -->
+        <receiver
+            android:name=".HealthChangeReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="androidx.health.connect.action.HEALTH_DATA_SYNC" />
+            </intent-filter>
+        </receiver>
     </application>
 </manifest> 
