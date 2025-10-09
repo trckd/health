@@ -68,8 +68,7 @@ class HealthPermissionActivity : ComponentActivity() {
     private fun getRequiredPermissions(): Set<String> {
         return setOf(
             HealthPermission.getReadPermission(StepsRecord::class),
-            HealthPermission.getReadPermission(WeightRecord::class),
-            HealthPermission.getWritePermission(WeightRecord::class)
+            HealthPermission.getReadPermission(WeightRecord::class)
         )
     }
 }

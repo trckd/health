@@ -54,14 +54,6 @@ class HealthModule : Module() {
 
     Events("onStepDataUpdate", "onBodyWeightDataUpdate")
 
-    Function("addListener") { _: String, _: Any? ->
-      // Required for EventEmitter compliance
-    }
-
-    Function("removeListeners") { _: Int ->
-      // Required for EventEmitter compliance
-    }
-
     Constants(
       "isHealthDataAvailable" to isHealthConnectAvailable()
     )
