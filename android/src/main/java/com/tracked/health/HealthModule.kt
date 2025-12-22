@@ -121,7 +121,45 @@ class HealthModule : Module() {
           promise.resolve(totalSteps)
         } catch (e: Exception) {
           Log.e(TAG, "Error getting step count", e)
-          promise.resolve(0.0)
+
+          // Distinguish between "no data" (legitimate) vs actual errors
+          val errorMessage = e.message ?: "Unknown error"
+          if (errorMessage.contains("No data available") || errorMessage.contains("no records found")) {
+            // Legitimate case: no step data for this date range
+            Log.d(TAG, "No step data available for period - returning 0")
+            promise.resolve(0.0)
+          } else {
+            // Actual error: reject so JavaScript can handle it
+            Log.e(TAG, "Health Connect error: $errorMessage")
+            promise.reject("HEALTH_CONNECT_ERROR", "Failed to retrieve step data: $errorMessage", e)
+          }
+        }
+      }
+    }
+
+    AsyncFunction("hasStepDataForDate") { startDate: Long, endDate: Long, promise: Promise ->
+      moduleScope.launch {
+        try {
+          val startInstant = Instant.ofEpochMilli(startDate)
+          val endInstant = Instant.ofEpochMilli(endDate)
+
+          Log.d(TAG, "Checking if step data exists for period $startInstant to $endInstant")
+
+          val hasData = withContext(ioDispatcher) {
+            val request = ReadRecordsRequest(
+              recordType = StepsRecord::class,
+              timeRangeFilter = TimeRangeFilter.between(startInstant, endInstant)
+            )
+
+            val response = healthConnectClient.readRecords(request)
+            response.records.isNotEmpty()
+          }
+
+          Log.d(TAG, "Step data exists for period: $hasData")
+          promise.resolve(hasData)
+        } catch (e: Exception) {
+          Log.e(TAG, "Error checking for step data", e)
+          promise.resolve(false)
         }
       }
     }

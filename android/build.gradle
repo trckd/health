@@ -21,13 +21,13 @@ buildscript {
     if (ext.has("kotlinVersion")) {
       ext.kotlinVersion()
     } else {
-      ext.safeExtGet("kotlinVersion", "1.9.23")
+      ext.safeExtGet("kotlinVersion", "2.1.20")
     }
   }
 }
 
 android {
-  compileSdkVersion safeExtGet("compileSdkVersion", 34)
+  compileSdkVersion safeExtGet("compileSdkVersion", 36)
 
   compileOptions {
     sourceCompatibility JavaVersion.VERSION_17
@@ -41,7 +41,7 @@ android {
   namespace "com.tracked.health"
   defaultConfig {
     minSdkVersion safeExtGet("minSdkVersion", 26)
-    targetSdkVersion safeExtGet("targetSdkVersion", 34)
+    targetSdkVersion safeExtGet("targetSdkVersion", 36)
     versionCode 1
     versionName "1.0"
   }
