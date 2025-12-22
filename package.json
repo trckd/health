@@ -1,6 +1,6 @@
 {
   "name": "@tracked/health",
-  "version": "0.0.26",
+  "version": "0.0.27",
   "description": "Health module",
   "main": "build/index.js",
   "types": "build/index.d.ts",
