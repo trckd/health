@@ -9,6 +9,10 @@ public class HealthModule: Module {
   private var bodyWeightObservationStarted = false
   private var bodyWeightAnchor: HKQueryAnchor?
   private let bodyWeightAnchorKey = "com.tracked.health.bodyweight.anchor"
+  private var sleepObserver: HKObserverQuery?
+  private var sleepObservationStarted = false
+  private var sleepAnchor: HKQueryAnchor?
+  private let sleepAnchorKey = "com.tracked.health.sleep.anchor"
   private let isoFormatter: ISO8601DateFormatter = {
     let formatter = ISO8601DateFormatter()
     formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -17,7 +21,7 @@ public class HealthModule: Module {
   public func definition() -> ModuleDefinition {
     Name("Health")
 
-    Events("onStepDataUpdate", "onBodyWeightDataUpdate")
+    Events("onStepDataUpdate", "onBodyWeightDataUpdate", "onSleepDataUpdate")
 
     Constants([
       "isHealthDataAvailable": HKHealthStore.isHealthDataAvailable()
@@ -29,6 +33,7 @@ public class HealthModule: Module {
 
     OnCreate {
       self.bodyWeightAnchor = self.loadBodyWeightAnchor()
+      self.sleepAnchor = self.loadSleepAnchor()
     }
 
     OnDestroy {
@@ -44,6 +49,12 @@ public class HealthModule: Module {
         self.bodyWeightObserver = nil
         self.bodyWeightObservationStarted = false
       }
+
+      if let sleepObserver = self.sleepObserver {
+        self.healthStore.stop(sleepObserver)
+        self.sleepObserver = nil
+        self.sleepObservationStarted = false
+      }
     }
 
     AsyncFunction("requestAuthorization") { (promise: Promise) in
@@ -54,13 +65,14 @@ public class HealthModule: Module {
 
       guard
         let stepCountType = HKQuantityType.quantityType(forIdentifier: .stepCount),
-        let bodyMassType = HKQuantityType.quantityType(forIdentifier: .bodyMass)
+        let bodyMassType = HKQuantityType.quantityType(forIdentifier: .bodyMass),
+        let sleepAnalysisType = HKObjectType.categoryType(forIdentifier: .sleepAnalysis)
       else {
         promise.reject("Type unavailable", "Required HealthKit data types are not available")
         return
       }
 
-      let typesToRead: Set<HKObjectType> = [stepCountType, bodyMassType]
+      let typesToRead: Set<HKObjectType> = [stepCountType, bodyMassType, sleepAnalysisType]
 
       healthStore.requestAuthorization(toShare: [], read: typesToRead) { success, error in
         if let error {
@@ -346,6 +358,112 @@ public class HealthModule: Module {
         promise.resolve(success)
       }
     }
+
+    AsyncFunction("getSleepSessions") { (startDateMs: Double, endDateMs: Double, promise: Promise) in
+      guard HKHealthStore.isHealthDataAvailable() else {
+        promise.reject("HealthKit unavailable", "HealthKit is not available on this device")
+        return
+      }
+
+      guard let sleepAnalysisType = HKObjectType.categoryType(forIdentifier: .sleepAnalysis) else {
+        promise.reject("Type unavailable", "Sleep analysis type is not available")
+        return
+      }
+
+      let startDate = Date(timeIntervalSince1970: startDateMs / 1000.0)
+      let endDate = Date(timeIntervalSince1970: endDateMs / 1000.0)
+      let predicate = HKQuery.predicateForSamples(withStart: startDate, end: endDate, options: .strictStartDate)
+      let sortDescriptor = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: true)
+
+      let query = HKSampleQuery(
+        sampleType: sleepAnalysisType,
+        predicate: predicate,
+        limit: HKObjectQueryNoLimit,
+        sortDescriptors: [sortDescriptor]
+      ) { [weak self] _, samples, error in
+        guard let self else {
+          DispatchQueue.main.async { promise.resolve([]) }
+          return
+        }
+
+        if let error {
+          promise.reject("sleep_read_error", error.localizedDescription)
+          return
+        }
+
+        let categorySamples = (samples as? [HKCategorySample]) ?? []
+        let sessions = self.groupSleepSamples(categorySamples)
+
+        DispatchQueue.main.async {
+          promise.resolve(sessions)
+        }
+      }
+
+      healthStore.execute(query)
+    }
+
+    AsyncFunction("enableSleepUpdates") { (frequency: String, promise: Promise) in
+      guard HKHealthStore.isHealthDataAvailable() else {
+        promise.reject("HealthKit unavailable", "HealthKit is not available on this device")
+        return
+      }
+
+      guard let sleepAnalysisType = HKObjectType.categoryType(forIdentifier: .sleepAnalysis) else {
+        promise.reject("Type unavailable", "Sleep analysis type is not available")
+        return
+      }
+
+      let updateFrequency: HKUpdateFrequency
+      switch frequency.lowercased() {
+      case "immediate": updateFrequency = .immediate
+      case "hourly": updateFrequency = .hourly
+      case "daily": updateFrequency = .daily
+      case "weekly": updateFrequency = .weekly
+      default: updateFrequency = .daily
+      }
+
+      healthStore.enableBackgroundDelivery(for: sleepAnalysisType, frequency: updateFrequency) { success, error in
+        if let error {
+          promise.reject("sleep_delivery_error", error.localizedDescription)
+          return
+        }
+
+        if success {
+          self.startSleepObservation(sleepAnalysisType: sleepAnalysisType)
+        }
+
+        promise.resolve(success)
+      }
+    }
+
+    AsyncFunction("disableSleepUpdates") { (promise: Promise) in
+      guard HKHealthStore.isHealthDataAvailable() else {
+        promise.reject("HealthKit unavailable", "HealthKit is not available on this device")
+        return
+      }
+
+      guard let sleepAnalysisType = HKObjectType.categoryType(forIdentifier: .sleepAnalysis) else {
+        promise.reject("Type unavailable", "Sleep analysis type is not available")
+        return
+      }
+
+      if let observer = self.sleepObserver {
+        self.healthStore.stop(observer)
+        self.sleepObserver = nil
+      }
+      self.sleepObservationStarted = false
+      self.sleepAnchor = nil
+      self.saveSleepAnchor(nil)
+
+      self.healthStore.disableBackgroundDelivery(for: sleepAnalysisType) { success, error in
+        if let error {
+          promise.reject("sleep_delivery_error", error.localizedDescription)
+          return
+        }
+
+        promise.resolve(success)
+      }
+    }
   }
 
   private func makeBodyWeightPayload(from sample: HKQuantitySample) -> [String: Any] {
@@ -465,6 +583,199 @@ public class HealthModule: Module {
       }
     } else {
       UserDefaults.standard.removeObject(forKey: bodyWeightAnchorKey)
+    }
+  }
+
+  private func sleepStageType(from value: HKCategoryValueSleepAnalysis) -> String {
+    switch value {
+    case .inBed:
+      return "InBed"
+    case .asleepUnspecified:
+      return "Sleeping"
+    case .awake:
+      return "Awake"
+    case .asleepCore:
+      return "AsleepCore"
+    case .asleepDeep:
+      return "AsleepDeep"
+    case .asleepREM:
+      return "AsleepREM"
+    @unknown default:
+      return "Unknown"
+    }
+  }
+
+  private func groupSleepSamples(_ samples: [HKCategorySample]) -> [[String: Any]] {
+    // Group overlapping samples into sessions
+    // Sleep data from HealthKit can have overlapping samples (e.g., InBed + Asleep)
+    // We need to group them by their time ranges
+
+    var sessions: [[String: Any]] = []
+    var currentSessionSamples: [HKCategorySample] = []
+
+    for sample in samples {
+      if currentSessionSamples.isEmpty {
+        currentSessionSamples.append(sample)
+      } else {
+        // Check if this sample overlaps with or is near the current session
+        let lastSample = currentSessionSamples.last!
+        let gap = sample.startDate.timeIntervalSince(lastSample.endDate)
+
+        // If gap is less than 30 minutes, consider it part of the same session
+        if gap < 1800 {
+          currentSessionSamples.append(sample)
+        } else {
+          // Create a session from current samples
+          if let session = createSleepSession(from: currentSessionSamples) {
+            sessions.append(session)
+          }
+          currentSessionSamples = [sample]
+        }
+      }
+    }
+
+    // Don't forget the last session
+    if !currentSessionSamples.isEmpty {
+      if let session = createSleepSession(from: currentSessionSamples) {
+        sessions.append(session)
+      }
+    }
+
+    return sessions
+  }
+
+  private func createSleepSession(from samples: [HKCategorySample]) -> [String: Any]? {
+    guard !samples.isEmpty else { return nil }
+
+    // Find the overall start and end times
+    let startTime = samples.map { $0.startDate }.min() ?? Date()
+    let endTime = samples.map { $0.endDate }.max() ?? Date()
+    let totalDuration = endTime.timeIntervalSince(startTime)
+
+    // Convert samples to stages
+    let stages: [[String: Any]] = samples.map { sample in
+      let stageDuration = sample.endDate.timeIntervalSince(sample.startDate)
+      return [
+        "type": sleepStageType(from: HKCategoryValueSleepAnalysis(rawValue: sample.value) ?? .inBed),
+        "startTime": Int(sample.startDate.timeIntervalSince1970 * 1000.0),
+        "endTime": Int(sample.endDate.timeIntervalSince1970 * 1000.0),
+        "duration": Int(stageDuration * 1000.0)
+      ]
+    }
+
+    let source = samples.first?.sourceRevision.source.name ?? "Unknown"
+
+    return [
+      "startTime": Int(startTime.timeIntervalSince1970 * 1000.0),
+      "endTime": Int(endTime.timeIntervalSince1970 * 1000.0),
+      "totalDuration": Int(totalDuration * 1000.0),
+      "isoStartDate": isoFormatter.string(from: startTime),
+      "isoEndDate": isoFormatter.string(from: endTime),
+      "stages": stages,
+      "source": source
+    ]
+  }
+
+  private func startSleepObservation(sleepAnalysisType: HKCategoryType) {
+    // Clean up any existing observer
+    if let existingObserver = sleepObserver {
+      healthStore.stop(existingObserver)
+      sleepObserver = nil
+    }
+
+    if sleepObservationStarted && sleepObserver != nil { return }
+
+    if sleepAnchor == nil {
+      sleepAnchor = loadSleepAnchor()
+    }
+
+    sleepObservationStarted = true
+
+    let observer = HKObserverQuery(sampleType: sleepAnalysisType, predicate: nil) { [weak self] _, completionHandler, error in
+      guard let self else {
+        completionHandler()
+        return
+      }
+
+      if let error {
+        print("Sleep observer error: \(error.localizedDescription)")
+        completionHandler()
+        return
+      }
+
+      self.fetchSleepChanges(sleepAnalysisType: sleepAnalysisType) {
+        completionHandler()
+      }
+    }
+
+    healthStore.execute(observer)
+    sleepObserver = observer
+
+    fetchSleepChanges(sleepAnalysisType: sleepAnalysisType, completion: nil)
+  }
+
+  private func fetchSleepChanges(
+    sleepAnalysisType: HKCategoryType,
+    completion: (() -> Void)?
+  ) {
+    let completionHandler = completion
+    let anchoredQuery = HKAnchoredObjectQuery(
+      type: sleepAnalysisType,
+      predicate: nil,
+      anchor: sleepAnchor,
+      limit: HKObjectQueryNoLimit
+    ) { [weak self] _, samples, _, newAnchor, error in
+      defer { completionHandler?() }
+
+      guard let self else { return }
+
+      if let error {
+        print("Anchored sleep query error: \(error.localizedDescription)")
+        return
+      }
+
+      if let newAnchor {
+        self.sleepAnchor = newAnchor
+        self.saveSleepAnchor(newAnchor)
+      }
+
+      guard let categorySamples = samples as? [HKCategorySample], !categorySamples.isEmpty else {
+        return
+      }
+
+      let sessions = self.groupSleepSamples(categorySamples)
+
+      guard let latestSession = sessions.last else {
+        return
+      }
+
+      DispatchQueue.main.async {
+        self.sendEvent("onSleepDataUpdate", latestSession)
+      }
+    }
+
+    healthStore.execute(anchoredQuery)
+  }
+
+  private func loadSleepAnchor() -> HKQueryAnchor? {
+    guard let data = UserDefaults.standard.data(forKey: sleepAnchorKey) else {
+      return nil
+    }
+
+    if let anchor = try? NSKeyedUnarchiver.unarchivedObject(ofClass: HKQueryAnchor.self, from: data) {
+      return anchor
+    }
+
+    return nil
+  }
+
+  private func saveSleepAnchor(_ anchor: HKQueryAnchor?) {
+    if let anchor {
+      if let data = try? NSKeyedArchiver.archivedData(withRootObject: anchor, requiringSecureCoding: true) {
+        UserDefaults.standard.set(data, forKey: sleepAnchorKey)
+      }
+    } else {
+      UserDefaults.standard.removeObject(forKey: sleepAnchorKey)
     }
   }
 }

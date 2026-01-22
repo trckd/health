@@ -5,6 +5,8 @@ import android.content.Intent
 import android.util.Log
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.permission.HealthPermission
+import androidx.health.connect.client.records.SleepSessionRecord
+import androidx.health.connect.client.records.SleepStageRecord
 import androidx.health.connect.client.records.StepsRecord
 import androidx.health.connect.client.records.WeightRecord
 import androidx.health.connect.client.request.ReadRecordsRequest
@@ -52,7 +54,7 @@ class HealthModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("Health")
 
-    Events("onStepDataUpdate", "onBodyWeightDataUpdate")
+    Events("onStepDataUpdate", "onBodyWeightDataUpdate", "onSleepDataUpdate")
 
     Constants(
       "isHealthDataAvailable" to isHealthConnectAvailable()
@@ -78,7 +80,8 @@ class HealthModule : Module() {
         try {
           val permissions = setOf(
             HealthPermission.getReadPermission(StepsRecord::class),
-            HealthPermission.getReadPermission(WeightRecord::class)
+            HealthPermission.getReadPermission(WeightRecord::class),
+            HealthPermission.getReadPermission(SleepSessionRecord::class)
           )
 
           val granted = withContext(ioDispatcher) {
@@ -279,6 +282,69 @@ class HealthModule : Module() {
         }
       }
     }
+
+    AsyncFunction("getSleepSessions") { startDate: Long, endDate: Long, promise: Promise ->
+      moduleScope.launch {
+        try {
+          val startInstant = Instant.ofEpochMilli(startDate)
+          val endInstant = Instant.ofEpochMilli(endDate)
+
+          Log.d(TAG, "Querying sleep sessions from $startInstant to $endInstant")
+
+          val sessions = withContext(ioDispatcher) {
+            val request = ReadRecordsRequest(
+              recordType = SleepSessionRecord::class,
+              timeRangeFilter = TimeRangeFilter.between(startInstant, endInstant)
+            )
+
+            val response = healthConnectClient.readRecords(request)
+            response.records.sortedBy { it.startTime }.map { mapSleepSession(it) }
+          }
+
+          Log.d(TAG, "Retrieved ${sessions.size} sleep sessions")
+          promise.resolve(sessions)
+        } catch (e: Exception) {
+          Log.e(TAG, "Error getting sleep sessions", e)
+          promise.reject("sleep_read_error", e.message, e)
+        }
+      }
+    }
+
+    AsyncFunction("enableSleepUpdates") { frequency: String, promise: Promise ->
+      moduleScope.launch {
+        try {
+          val result = withContext(ioDispatcher) {
+            SleepBackgroundSync.enable(context.applicationContext, frequency)
+          }
+
+          if (result) {
+            SleepBackgroundSync.scheduleSync(context.applicationContext, immediate = true)
+          }
+
+          Log.i(TAG, "Sleep background updates enabled (frequency hint: $frequency)")
+          promise.resolve(result)
+        } catch (e: Exception) {
+          Log.e(TAG, "Error enabling sleep updates", e)
+          promise.reject("sleep_delivery_error", e.message, e)
+        }
+      }
+    }
+
+    AsyncFunction("disableSleepUpdates") { promise: Promise ->
+      moduleScope.launch {
+        try {
+          val result = withContext(ioDispatcher) {
+            SleepBackgroundSync.disable(context.applicationContext)
+          }
+
+          Log.i(TAG, "Sleep background updates disabled")
+          promise.resolve(result)
+        } catch (e: Exception) {
+          Log.e(TAG, "Error disabling sleep updates", e)
+          promise.reject("sleep_delivery_error", e.message, e)
+        }
+      }
+    }
   }
 
   private fun isHealthConnectAvailable(): Boolean {
@@ -348,6 +414,58 @@ class HealthModule : Module() {
       Log.d(TAG, "Sent bodyweight update event: $valueKg kg")
     } catch (e: Exception) {
       Log.e(TAG, "Error sending bodyweight update event", e)
+    }
+  }
+
+  private fun sleepStageTypeToString(stage: Int): String {
+    return when (stage) {
+      SleepSessionRecord.STAGE_TYPE_UNKNOWN -> "Unknown"
+      SleepSessionRecord.STAGE_TYPE_AWAKE -> "Awake"
+      SleepSessionRecord.STAGE_TYPE_SLEEPING -> "Sleeping"
+      SleepSessionRecord.STAGE_TYPE_OUT_OF_BED -> "OutOfBed"
+      SleepSessionRecord.STAGE_TYPE_LIGHT -> "Light"
+      SleepSessionRecord.STAGE_TYPE_DEEP -> "Deep"
+      SleepSessionRecord.STAGE_TYPE_REM -> "REM"
+      SleepSessionRecord.STAGE_TYPE_AWAKE_IN_BED -> "AwakeInBed"
+      else -> "Unknown"
+    }
+  }
+
+  private fun mapSleepSession(record: SleepSessionRecord): Map<String, Any?> {
+    val startTimeMs = record.startTime.toEpochMilli()
+    val endTimeMs = record.endTime.toEpochMilli()
+    val totalDuration = endTimeMs - startTimeMs
+
+    val stages = record.stages.map { stage ->
+      val stageStartMs = stage.startTime.toEpochMilli()
+      val stageEndMs = stage.endTime.toEpochMilli()
+      val stageDuration = stageEndMs - stageStartMs
+
+      mapOf(
+        "type" to sleepStageTypeToString(stage.stage),
+        "startTime" to stageStartMs,
+        "endTime" to stageEndMs,
+        "duration" to stageDuration
+      )
+    }
+
+    return mapOf(
+      "startTime" to startTimeMs,
+      "endTime" to endTimeMs,
+      "totalDuration" to totalDuration,
+      "isoStartDate" to record.startTime.toString(),
+      "isoEndDate" to record.endTime.toString(),
+      "stages" to stages,
+      "source" to record.metadata.dataOrigin.packageName
+    )
+  }
+
+  internal fun sendSleepDataUpdate(session: Map<String, Any?>) {
+    try {
+      sendEvent("onSleepDataUpdate", session)
+      Log.d(TAG, "Sent sleep data update event")
+    } catch (e: Exception) {
+      Log.e(TAG, "Error sending sleep data update event", e)
     }
   }
 

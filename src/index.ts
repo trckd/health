@@ -5,7 +5,14 @@ export type {
   HealthModuleEvents,
   HealthModuleInterface,
   HealthSubscription,
+  SleepSession,
+  SleepStage,
+  SleepStageType,
+  SleepUpdateEvent,
   StepUpdateEvent,
   UpdateFrequency,
 } from "./module";
 export { default as Health } from "./module";
+
+// Export hooks
+export { useSleep } from "./features/sleep";
