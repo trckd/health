@@ -1,28 +1,11 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 // Import the health module with its type
 import { Health, BodyWeightSample } from "../..";
+import { AuthStatus } from "../../types";
+import { getDayBoundsMs } from "../steps/date-utils";
 
-export enum AuthStatus {
-  Unknown = "UNKNOWN",
-  Authorized = "AUTHORIZED",
-  NotAuthorized = "NOT_AUTHORIZED",
-}
-
-export { BodyWeightSample };
-
-// Helper to get day bounds in milliseconds
-function getDayBoundsMs(dateString: string) {
-  const localDate = new Date(dateString + "T00:00:00.000");
-  const startTime = new Date(localDate);
-  startTime.setHours(0, 0, 0, 0);
-  const endTime = new Date(localDate);
-  endTime.setHours(23, 59, 59, 999);
-  return {
-    startTime: startTime.getTime(),
-    endTime: endTime.getTime()
-  };
-}
+export { AuthStatus, BodyWeightSample };
 
 export function useBodyWeight(date?: string) {
   const [bodyWeightSamples, setBodyWeightSamples] = useState<
@@ -78,9 +61,11 @@ export function useBodyWeight(date?: string) {
     }
   }, [date, isInitialized, authStatus, fetchBodyWeightSamples]);
 
+  const bodyWeightUpdatesEnabled = useRef(false);
+
   // Set up real-time updates for body weight
   useEffect(() => {
-    let subscription: any = null;
+    let subscription: ReturnType<typeof Health.addListener> | null = null;
 
     if (isInitialized && authStatus === AuthStatus.Authorized) {
       subscription = Health.addListener(
@@ -98,11 +83,12 @@ export function useBodyWeight(date?: string) {
       );
     }
 
-    // Enable body weight updates
+    // Enable body weight updates once
     const setupBodyWeightUpdates = async () => {
-      if (isInitialized && authStatus === AuthStatus.Authorized) {
+      if (isInitialized && authStatus === AuthStatus.Authorized && !bodyWeightUpdatesEnabled.current) {
         try {
           await Health.enableBodyWeightUpdates("immediate");
+          bodyWeightUpdatesEnabled.current = true;
         } catch (err) {
           // noop - updates might already be enabled
         }

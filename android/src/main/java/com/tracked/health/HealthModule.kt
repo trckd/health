@@ -7,6 +7,7 @@ import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.permission.HealthPermission
 import androidx.health.connect.client.records.StepsRecord
 import androidx.health.connect.client.records.WeightRecord
+import androidx.health.connect.client.request.AggregateRequest
 import androidx.health.connect.client.request.ReadRecordsRequest
 import androidx.health.connect.client.time.TimeRangeFilter
 import expo.modules.kotlin.Promise
@@ -107,17 +108,17 @@ class HealthModule : Module() {
 
           Log.d(TAG, "Querying steps from $startInstant to $endInstant (input: $startDate to $endDate)")
 
-          val (totalSteps, recordCount) = withContext(ioDispatcher) {
-            val request = ReadRecordsRequest(
-              recordType = StepsRecord::class,
-              timeRangeFilter = TimeRangeFilter.between(startInstant, endInstant)
+          val totalSteps = withContext(ioDispatcher) {
+            val response = healthConnectClient.aggregate(
+              AggregateRequest(
+                metrics = setOf(StepsRecord.COUNT_TOTAL),
+                timeRangeFilter = TimeRangeFilter.between(startInstant, endInstant)
+              )
             )
-
-            val response = healthConnectClient.readRecords(request)
-            response.records.sumOf { it.count }.toDouble() to response.records.size
+            response[StepsRecord.COUNT_TOTAL]?.toDouble() ?: 0.0
           }
 
-          Log.d(TAG, "Retrieved $totalSteps steps for period ${startInstant} to ${endInstant} ($recordCount records)")
+          Log.d(TAG, "Retrieved $totalSteps steps for period ${startInstant} to ${endInstant}")
           promise.resolve(totalSteps)
         } catch (e: Exception) {
           Log.e(TAG, "Error getting step count", e)
@@ -192,12 +193,25 @@ class HealthModule : Module() {
       moduleScope.launch {
         try {
           val latest = withContext(ioDispatcher) {
-            val request = ReadRecordsRequest(
+            val now = Instant.now()
+            // Try last 90 days first to avoid scanning entire history
+            val recentStart = now.minus(java.time.Duration.ofDays(90))
+            val recentRequest = ReadRecordsRequest(
               recordType = WeightRecord::class,
-              timeRangeFilter = TimeRangeFilter.between(Instant.EPOCH, Instant.now())
+              timeRangeFilter = TimeRangeFilter.between(recentStart, now)
             )
-            val response = healthConnectClient.readRecords(request)
-            response.records.maxByOrNull { it.time }?.let { mapWeightRecord(it) }
+            val recentResponse = healthConnectClient.readRecords(recentRequest)
+            val record = recentResponse.records.maxByOrNull { it.time }
+              ?: run {
+                // Fallback to last 2 years if no recent records
+                val fallbackStart = now.minus(java.time.Duration.ofDays(730))
+                val fallbackRequest = ReadRecordsRequest(
+                  recordType = WeightRecord::class,
+                  timeRangeFilter = TimeRangeFilter.between(fallbackStart, now)
+                )
+                healthConnectClient.readRecords(fallbackRequest).records.maxByOrNull { it.time }
+              }
+            record?.let { mapWeightRecord(it) }
           }
 
           promise.resolve(latest)
@@ -298,6 +312,12 @@ class HealthModule : Module() {
 
   private fun launchPermissionActivity(permissions: Set<String>, promise: Promise) {
     try {
+      // Reject if a permission request is already in flight
+      pendingPermissionPromise?.let { existing ->
+        existing.reject("authorization_error", "A permission request is already in progress", null)
+        pendingPermissionPromise = null
+      }
+
       val intent = Intent(context, HealthPermissionActivity::class.java).apply {
         addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         putStringArrayListExtra("required_permissions", ArrayList(permissions))

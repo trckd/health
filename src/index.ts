@@ -9,3 +9,4 @@ export type {
   UpdateFrequency,
 } from "./module";
 export { default as Health } from "./module";
+export { AuthStatus } from "./types";

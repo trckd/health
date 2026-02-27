@@ -7,7 +7,8 @@ import androidx.health.connect.client.permission.HealthPermission
 import androidx.health.connect.client.records.StepsRecord
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
-import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
 
 class StepChangeSyncWorker(
   context: Context,
@@ -30,11 +31,11 @@ class StepChangeSyncWorker(
       val hasChanges = HealthBackgroundSync.pullLatestChanges(applicationContext)
       if (hasChanges) {
         val steps = HealthBackgroundSync.readTodayStepCount(applicationContext)
-        val timestamp = Instant.now().toString()
+        val todayDate = LocalDate.now(ZoneId.systemDefault()).toString()
 
         val module = HealthModule.getInstance()
         if (module != null) {
-          module.sendStepDataUpdate(steps, timestamp)
+          module.sendStepDataUpdate(steps, todayDate)
           Log.d(TAG, "Dispatched background step update event ($steps)")
         } else {
           Log.d(TAG, "Health module not available; skipping JS dispatch")

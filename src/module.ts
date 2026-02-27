@@ -40,6 +40,12 @@ export interface HealthModuleInterface {
    */
   getStepCount(startDate: number, endDate: number): Promise<number>;
   /**
+   * Check whether any step records exist for a given date range.
+   * @param startDate - The start date in milliseconds since epoch
+   * @param endDate - The end date in milliseconds since epoch
+   */
+  hasStepDataForDate(startDate: number, endDate: number): Promise<boolean>;
+  /**
    * Enable background delivery for step count updates
    */
   enableBackgroundDelivery(frequency: UpdateFrequency): Promise<boolean>;
@@ -63,7 +69,6 @@ export interface HealthModuleInterface {
    * Retrieve the most recent recorded body weight or null if none exist.
    */
   getLatestBodyWeight(): Promise<BodyWeightSample | null>;
-
 }
 
 declare class HealthModule
@@ -74,6 +79,7 @@ declare class HealthModule
   checkHealthDataAvailable(): boolean;
   requestAuthorization(): Promise<boolean>;
   getStepCount(startDate: number, endDate: number): Promise<number>;
+  hasStepDataForDate(startDate: number, endDate: number): Promise<boolean>;
   enableBackgroundDelivery(frequency: UpdateFrequency): Promise<boolean>;
   disableBackgroundDelivery(): Promise<boolean>;
   enableBodyWeightUpdates(frequency: UpdateFrequency): Promise<boolean>;

@@ -1,14 +1,12 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Platform } from "react-native";
 
 // Import the health module with its type
-import { Health } from "../..";
+import { Health, StepUpdateEvent } from "../..";
+import { AuthStatus } from "../../types";
+import { getDayBoundsMs } from "./date-utils";
 
-export enum AuthStatus {
-  Unknown = "UNKNOWN",
-  Authorized = "AUTHORIZED",
-  NotAuthorized = "NOT_AUTHORIZED",
-}
+export { AuthStatus };
 
 export function useSteps(date: string) {
   const [steps, setSteps] = useState<number>(0);
@@ -24,16 +22,6 @@ export function useSteps(date: string) {
     default: "Health Service",
   });
 
-  // Prepare date range for the query
-  const getDateRange = useCallback((dateString: string) => {
-    const localDate = new Date(dateString + "T00:00:00.000");
-    const startTime = new Date(localDate);
-    startTime.setHours(0, 0, 0, 0);
-    const endTime = new Date(localDate);
-    endTime.setHours(23, 59, 59, 999);
-    return { startTime: startTime.getTime(), endTime: endTime.getTime() };
-  }, []);
-
   // Fetch steps using our custom Health module
   const fetchSteps = useCallback(async () => {
     try {
@@ -43,7 +31,7 @@ export function useSteps(date: string) {
       }
 
       setLoading(true);
-      const { startTime, endTime } = getDateRange(date);
+      const { startTime, endTime } = getDayBoundsMs(date);
 
       const totalSteps = await Health.getStepCount(startTime, endTime);
       setSteps(totalSteps);
@@ -54,7 +42,7 @@ export function useSteps(date: string) {
     } finally {
       setLoading(false);
     }
-  }, [date, getDateRange, healthServiceName]);
+  }, [date, healthServiceName]);
 
   // Fetch steps when date changes or when initialized
   useEffect(() => {
@@ -63,9 +51,11 @@ export function useSteps(date: string) {
     }
   }, [date, isInitialized, authStatus, fetchSteps]);
 
+  const backgroundDeliveryEnabled = useRef(false);
+
   // Set up background delivery and event listeners
   useEffect(() => {
-    const subscription = Health.addListener("onStepDataUpdate", (event: any) => {
+    const subscription = Health.addListener("onStepDataUpdate", (event: StepUpdateEvent) => {
       // Only update steps if we're looking at today's date
       const today = new Date().toISOString().split("T")[0];
       if (date === today && event.steps !== undefined) {
@@ -73,11 +63,12 @@ export function useSteps(date: string) {
       }
     });
 
-    // Enable background delivery if initialized and not already enabled
+    // Enable background delivery once
     const setupBackgroundDelivery = async () => {
-      if (isInitialized && authStatus === AuthStatus.Authorized) {
+      if (isInitialized && authStatus === AuthStatus.Authorized && !backgroundDeliveryEnabled.current) {
         try {
           await Health.enableBackgroundDelivery("immediate");
+          backgroundDeliveryEnabled.current = true;
         } catch (err) {
           // noop - background delivery might already be enabled
         }

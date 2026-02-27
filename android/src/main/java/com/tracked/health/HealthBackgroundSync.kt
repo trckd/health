@@ -5,8 +5,8 @@ import android.util.Log
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.permission.HealthPermission
 import androidx.health.connect.client.records.StepsRecord
+import androidx.health.connect.client.request.AggregateRequest
 import androidx.health.connect.client.request.ChangesTokenRequest
-import androidx.health.connect.client.request.ReadRecordsRequest
 import androidx.health.connect.client.time.TimeRangeFilter
 import androidx.work.ExistingWorkPolicy
 import androidx.work.OneTimeWorkRequestBuilder
@@ -96,12 +96,19 @@ internal object HealthBackgroundSync {
     var hasChanges = false
     var nextToken = currentToken
     var keepReading = true
+    var tokenRetries = 0
+    val maxTokenRetries = 3
 
     while (keepReading) {
       val response = client.getChanges(nextToken)
 
       if (response.changesTokenExpired) {
-        Log.w(TAG, "Changes token expired, requesting a fresh token")
+        tokenRetries++
+        if (tokenRetries > maxTokenRetries) {
+          Log.e(TAG, "Changes token expired $maxTokenRetries times; aborting")
+          break
+        }
+        Log.w(TAG, "Changes token expired (attempt $tokenRetries/$maxTokenRetries), requesting a fresh token")
         nextToken = client.getChangesToken(tokenRequest)
         prefs.edit().putString(KEY_STEPS_TOKEN, nextToken).apply()
         continue
@@ -130,14 +137,14 @@ internal object HealthBackgroundSync {
       .minusNanos(1)
       .toInstant()
 
-    val response = client.readRecords(
-      ReadRecordsRequest(
-        recordType = StepsRecord::class,
+    val response = client.aggregate(
+      AggregateRequest(
+        metrics = setOf(StepsRecord.COUNT_TOTAL),
         timeRangeFilter = TimeRangeFilter.between(startOfDay, endOfDay)
       )
     )
 
-    return response.records.sumOf { it.count }.toDouble()
+    return response[StepsRecord.COUNT_TOTAL]?.toDouble() ?: 0.0
   }
 
   private fun preferences(context: Context) =

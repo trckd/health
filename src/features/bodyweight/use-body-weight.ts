@@ -19,6 +19,6 @@ const useBodyWeightImplementation = Platform.select({
 
 export const useBodyWeight = useBodyWeightImplementation;
 
-// Re-export types from the iOS implementation (they're the same for both platforms)
+// Re-export types
 export type { BodyWeightSample } from "./use-body-weight.ios";
-export { AuthStatus } from "./use-body-weight.ios";
+export { AuthStatus } from "../../types";
