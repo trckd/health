@@ -25,7 +25,7 @@ public class HealthModule: Module {
 
     Events("onStepDataUpdate", "onBodyWeightDataUpdate")
 
-    Function("addListener") { (_: String) in
+    Function("addListener") { (_: String, _: JSValue) in
       // Required for Expo event emitter compliance
     }
 
