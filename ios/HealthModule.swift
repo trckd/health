@@ -14,10 +14,24 @@ public class HealthModule: Module {
     formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
     return formatter
   }()
+  private let dayFormatter: DateFormatter = {
+    let formatter = DateFormatter()
+    formatter.dateFormat = "yyyy-MM-dd"
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    return formatter
+  }()
   public func definition() -> ModuleDefinition {
     Name("Health")
 
     Events("onStepDataUpdate", "onBodyWeightDataUpdate")
+
+    Function("addListener") { (_: String) in
+      // Required for Expo event emitter compliance
+    }
+
+    Function("removeListeners") { (_: Int) in
+      // Required for Expo event emitter compliance
+    }
 
     Constants([
       "isHealthDataAvailable": HKHealthStore.isHealthDataAvailable()
@@ -100,6 +114,40 @@ public class HealthModule: Module {
         let steps = result?.sumQuantity()?.doubleValue(for: HKUnit.count()) ?? 0
         DispatchQueue.main.async {
           promise.resolve(steps)
+        }
+      }
+
+      healthStore.execute(query)
+    }
+
+    AsyncFunction("hasStepDataForDate") { (startDateMs: Double, endDateMs: Double, promise: Promise) in
+      guard HKHealthStore.isHealthDataAvailable() else {
+        promise.reject("HealthKit unavailable", "HealthKit is not available on this device")
+        return
+      }
+
+      guard let stepCountType = HKQuantityType.quantityType(forIdentifier: .stepCount) else {
+        promise.reject("Type unavailable", "Step count type is not available")
+        return
+      }
+
+      let startDate = Date(timeIntervalSince1970: startDateMs / 1000.0)
+      let endDate = Date(timeIntervalSince1970: endDateMs / 1000.0)
+      let predicate = HKQuery.predicateForSamples(withStart: startDate, end: endDate, options: .strictStartDate)
+
+      let query = HKStatisticsQuery(
+        quantityType: stepCountType,
+        quantitySamplePredicate: predicate,
+        options: .cumulativeSum
+      ) { _, result, error in
+        if let error {
+          promise.reject("statistics_error", error.localizedDescription)
+          return
+        }
+
+        let steps = result?.sumQuantity()?.doubleValue(for: HKUnit.count()) ?? 0
+        DispatchQueue.main.async {
+          promise.resolve(steps > 0)
         }
       }
 
@@ -235,7 +283,7 @@ public class HealthModule: Module {
               let steps = result?.sumQuantity()?.doubleValue(for: HKUnit.count()) ?? 0
               let payload: [String: Any] = [
                 "steps": steps,
-                "date": self.isoFormatter.string(from: now)
+                "date": self.dayFormatter.string(from: now)
               ]
 
               DispatchQueue.main.async {
