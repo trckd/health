@@ -25,14 +25,6 @@ public class HealthModule: Module {
 
     Events("onStepDataUpdate", "onBodyWeightDataUpdate")
 
-    Function("addListener") { (_: String, _: JSValue) in
-      // Required for Expo event emitter compliance
-    }
-
-    Function("removeListeners") { (_: Int) in
-      // Required for Expo event emitter compliance
-    }
-
     Constants([
       "isHealthDataAvailable": HKHealthStore.isHealthDataAvailable()
     ])
