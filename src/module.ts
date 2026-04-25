@@ -29,6 +29,46 @@ export type HealthModuleEvents = {
 
 export type UpdateFrequency = "immediate" | "hourly" | "daily" | "weekly";
 
+/**
+ * Snapshot describing the runtime state of the native health integration.
+ * Returned by `getHealthDiagnostics()` — every field is best-effort and may be
+ * `null`/empty if the underlying API call failed or the platform is iOS.
+ */
+export interface HealthDiagnostics {
+  /** AVAILABLE | UNAVAILABLE | PROVIDER_UPDATE_REQUIRED | EXCEPTION | UNKNOWN */
+  sdkStatus: string;
+  providerPackage: string | null;
+  providerVersionCode: number | null;
+  providerVersionName: string | null;
+  /** null on iOS — HealthKit doesn't expose read-auth state */
+  permissionsGranted: boolean | null;
+  grantedPermissions: string[];
+  backgroundDeliveryEnabled: boolean;
+  /** Epoch ms of the last WorkManager run, or null if it has never run */
+  lastWorkerRunMs: number | null;
+  lastWorkerResult: string | null;
+  lastWorkerError: string | null;
+  lastChangesTokenIssuedMs: number | null;
+  /** WorkInfo state name: ENQUEUED | RUNNING | SUCCEEDED | FAILED | CANCELLED | BLOCKED */
+  workManagerState: string | null;
+  oemBrand: string | null;
+  oemManufacturer: string | null;
+  oemModel: string | null;
+  oemDevice: string | null;
+  osSdkInt: number | null;
+  osRelease: string | null;
+  ignoringBatteryOptimizations: boolean;
+}
+
+export interface OpenSettingsResult {
+  ok: boolean;
+  intentUsed: string | null;
+}
+
+export interface OpenOemSettingsResult extends OpenSettingsResult {
+  oem: string;
+}
+
 export interface HealthModuleInterface {
   isHealthDataAvailable: boolean;
   checkHealthDataAvailable(): boolean;
@@ -69,6 +109,33 @@ export interface HealthModuleInterface {
    * Retrieve the most recent recorded body weight or null if none exist.
    */
   getLatestBodyWeight(): Promise<BodyWeightSample | null>;
+  /**
+   * Returns a fresh diagnostic snapshot of the health integration. Used by the
+   * step-tracking diagnostic screen and Sentry tag enricher. Never throws —
+   * fields are populated best-effort.
+   */
+  getHealthDiagnostics(): Promise<HealthDiagnostics>;
+  /**
+   * Open the system Health Connect settings UI (Android). On failure, falls
+   * back to the Play Store listing. iOS opens the Health app via Settings.
+   */
+  openHealthConnectSettings(): Promise<boolean>;
+  /**
+   * Open the OS battery-optimization settings for this app. Tries multiple
+   * intents in order of specificity. iOS resolves to false (not applicable).
+   */
+  openBatteryOptimizationSettings(): Promise<OpenSettingsResult>;
+  /**
+   * Open the OEM-specific auto-launch / background-activity manager (ColorOS,
+   * MIUI, EMUI, OnePlus, Vivo). Falls back to app details settings. The `oem`
+   * field reports which family was detected.
+   */
+  openOemAppLaunchSettings(): Promise<OpenOemSettingsResult>;
+  /**
+   * Schedule an immediate WorkManager sync run for the Health Connect change
+   * pipeline. Useful from the diagnostic screen "Run sync now" button.
+   */
+  triggerSyncNow(): Promise<boolean>;
 }
 
 declare class HealthModule
@@ -86,6 +153,11 @@ declare class HealthModule
   disableBodyWeightUpdates(): Promise<boolean>;
   getBodyWeightSamples(startDate: number, endDate: number): Promise<BodyWeightSample[]>;
   getLatestBodyWeight(): Promise<BodyWeightSample | null>;
+  getHealthDiagnostics(): Promise<HealthDiagnostics>;
+  openHealthConnectSettings(): Promise<boolean>;
+  openBatteryOptimizationSettings(): Promise<OpenSettingsResult>;
+  openOemAppLaunchSettings(): Promise<OpenOemSettingsResult>;
+  triggerSyncNow(): Promise<boolean>;
 }
 
 export default requireNativeModule<HealthModule>("Health");

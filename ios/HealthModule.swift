@@ -1,5 +1,6 @@
 import ExpoModulesCore
 import HealthKit
+import UIKit
 
 public class HealthModule: Module {
   private let healthStore = HKHealthStore()
@@ -385,6 +386,80 @@ public class HealthModule: Module {
 
         promise.resolve(success)
       }
+    }
+
+    // MARK: - Cross-platform diagnostics shim
+    //
+    // The Android side exposes a structured diagnostics + recovery API used by
+    // the in-app step-tracking diagnostic screen. iOS doesn't have the same
+    // surface area (no Health Connect provider package, no WorkManager, no
+    // OEM auto-launch settings), so these are no-op shims that report
+    // "everything is fine" so the same JS can render on both platforms.
+
+    AsyncFunction("getHealthDiagnostics") { (promise: Promise) in
+      let device = UIDevice.current
+      // Use NSNull() rather than Swift nil — Optional<Any> values are dropped
+      // when the dictionary is bridged to JS, producing `undefined` instead of
+      // `null`. HealthKit deliberately doesn't expose read-auth state, so
+      // permissionsGranted is null rather than misleadingly positive.
+      let snapshot: [String: Any] = [
+        "sdkStatus": HKHealthStore.isHealthDataAvailable() ? "AVAILABLE" : "UNAVAILABLE",
+        "providerPackage": NSNull(),
+        "providerVersionCode": NSNull(),
+        "providerVersionName": NSNull(),
+        "permissionsGranted": NSNull(),
+        "grantedPermissions": [],
+        "backgroundDeliveryEnabled": self.observerStarted,
+        "lastWorkerRunMs": NSNull(),
+        "lastWorkerResult": NSNull(),
+        "lastWorkerError": NSNull(),
+        "lastChangesTokenIssuedMs": NSNull(),
+        "workManagerState": NSNull(),
+        "oemBrand": "Apple",
+        "oemManufacturer": "Apple",
+        "oemModel": device.model,
+        "oemDevice": device.model,
+        "osSdkInt": NSNull(),
+        "osRelease": device.systemVersion,
+        "ignoringBatteryOptimizations": true
+      ]
+      promise.resolve(snapshot)
+    }
+
+    AsyncFunction("openHealthConnectSettings") { (promise: Promise) in
+      // UIApplication APIs must run on the main thread; AsyncFunction blocks
+      // execute on the module's background queue by default.
+      DispatchQueue.main.async {
+        if let url = URL(string: "x-apple-health://"), UIApplication.shared.canOpenURL(url) {
+          UIApplication.shared.open(url, options: [:]) { ok in
+            promise.resolve(ok)
+          }
+          return
+        }
+        if let url = URL(string: UIApplication.openSettingsURLString) {
+          UIApplication.shared.open(url, options: [:]) { ok in
+            promise.resolve(ok)
+          }
+          return
+        }
+        promise.resolve(false)
+      }
+    }
+
+    AsyncFunction("openBatteryOptimizationSettings") { (promise: Promise) in
+      // Not applicable on iOS — system manages background budgets.
+      promise.resolve(["ok": false, "intentUsed": NSNull()])
+    }
+
+    AsyncFunction("openOemAppLaunchSettings") { (promise: Promise) in
+      promise.resolve(["ok": false, "oem": "ios", "intentUsed": NSNull()])
+    }
+
+    AsyncFunction("triggerSyncNow") { (promise: Promise) in
+      // HealthKit's observer fires automatically; nothing to schedule manually.
+      // Report whether the observer is actually active so the diagnostic UI
+      // doesn't claim success when no listener is registered.
+      promise.resolve(self.observerStarted)
     }
   }
 

@@ -1,7 +1,13 @@
 package com.tracked.health
 
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
+import android.os.PowerManager
+import android.provider.Settings
 import android.util.Log
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.permission.HealthPermission
@@ -10,6 +16,8 @@ import androidx.health.connect.client.records.WeightRecord
 import androidx.health.connect.client.request.AggregateRequest
 import androidx.health.connect.client.request.ReadRecordsRequest
 import androidx.health.connect.client.time.TimeRangeFilter
+import androidx.work.WorkInfo
+import androidx.work.WorkManager
 import expo.modules.kotlin.Promise
 import expo.modules.kotlin.exception.Exceptions
 import expo.modules.kotlin.modules.Module
@@ -33,6 +41,7 @@ class HealthModule : Module() {
 
   companion object {
     private const val TAG = "HealthModule"
+    private const val HEALTH_CONNECT_PACKAGE = "com.google.android.apps.healthdata"
 
     @Volatile
     private var moduleInstance: WeakReference<HealthModule>? = null
@@ -103,6 +112,17 @@ class HealthModule : Module() {
     AsyncFunction("getStepCount") { startDate: Long, endDate: Long, promise: Promise ->
       moduleScope.launch {
         try {
+          // Re-check provider availability fresh so a stale "unavailable at boot"
+          // result does not silently mask a now-installed Health Connect.
+          if (!isHealthConnectAvailable()) {
+            promise.reject(
+              "HC_PROVIDER_UNAVAILABLE",
+              "Health Connect provider is not available on this device",
+              null
+            )
+            return@launch
+          }
+
           val startInstant = Instant.ofEpochMilli(startDate)
           val endInstant = Instant.ofEpochMilli(endDate)
 
@@ -126,14 +146,20 @@ class HealthModule : Module() {
           // Distinguish between "no data" (legitimate) vs actual errors
           val errorMessage = e.message ?: "Unknown error"
           if (errorMessage.contains("No data available") || errorMessage.contains("no records found")) {
-            // Legitimate case: no step data for this date range
             Log.d(TAG, "No step data available for period - returning 0")
             promise.resolve(0.0)
-          } else {
-            // Actual error: reject so JavaScript can handle it
-            Log.e(TAG, "Health Connect error: $errorMessage")
-            promise.reject("HEALTH_CONNECT_ERROR", "Failed to retrieve step data: $errorMessage", e)
+            return@launch
           }
+
+          val code = when {
+            e is SecurityException -> "HC_PERMISSION_DENIED"
+            e is android.os.RemoteException -> "HC_REMOTE_EXCEPTION"
+            errorMessage.contains("permission", ignoreCase = true) -> "HC_PERMISSION_DENIED"
+            else -> "HC_UNKNOWN_ERROR"
+          }
+          val errClass = e.javaClass.simpleName
+          Log.e(TAG, "Health Connect error [$code/$errClass]: $errorMessage")
+          promise.reject(code, "$errClass: $errorMessage", e)
         }
       }
     }
@@ -293,20 +319,319 @@ class HealthModule : Module() {
         }
       }
     }
+
+    AsyncFunction("getHealthDiagnostics") { promise: Promise ->
+      moduleScope.launch {
+        try {
+          val snapshot = withContext(ioDispatcher) { collectDiagnostics() }
+          promise.resolve(snapshot)
+        } catch (e: Exception) {
+          Log.e(TAG, "Error collecting health diagnostics", e)
+          // Never reject — diagnostics must be best-effort. Return a fully
+          // populated shell so JS callers reading non-nullable fields like
+          // `grantedPermissions.length` don't TypeError on the failure path.
+          promise.resolve(emptyDiagnostics("EXCEPTION"))
+        }
+      }
+    }
+
+    AsyncFunction("openHealthConnectSettings") { promise: Promise ->
+      try {
+        val opened = tryStartActivity(
+          Intent("androidx.health.ACTION_HEALTH_CONNECT_SETTINGS")
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        )
+        if (opened) {
+          promise.resolve(true)
+          return@AsyncFunction
+        }
+        // Fall back to Play Store listing for the provider package
+        val store = tryStartActivity(
+          Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=$HEALTH_CONNECT_PACKAGE"))
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        )
+        promise.resolve(store)
+      } catch (e: Exception) {
+        Log.e(TAG, "openHealthConnectSettings failed", e)
+        promise.resolve(false)
+      }
+    }
+
+    AsyncFunction("openBatteryOptimizationSettings") { promise: Promise ->
+      val pkg = context.packageName
+      // ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS would launch the per-app
+      // whitelist dialog directly, but it requires the matching permission
+      // (which Play Console scrutinizes), so we skip it and route users to
+      // the generic settings instead.
+      val candidates = listOf(
+        Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+          .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+          to "IGNORE_BATTERY_OPTIMIZATION_SETTINGS",
+        Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+          .setData(Uri.fromParts("package", pkg, null))
+          .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+          to "APPLICATION_DETAILS_SETTINGS"
+      )
+      for ((intent, label) in candidates) {
+        if (tryStartActivity(intent)) {
+          promise.resolve(mapOf("ok" to true, "intentUsed" to label))
+          return@AsyncFunction
+        }
+      }
+      promise.resolve(mapOf("ok" to false, "intentUsed" to null))
+    }
+
+    AsyncFunction("openOemAppLaunchSettings") { promise: Promise ->
+      val manufacturer = Build.MANUFACTURER.lowercase()
+      val brand = Build.BRAND.lowercase()
+      // Order matters: try OEM-specific settings first, fall back to generic battery.
+      val candidates = mutableListOf<Pair<Intent, String>>()
+      val oem = when {
+        manufacturer == "oppo" || manufacturer == "realme" || brand == "oppo" || brand == "realme" -> "coloros"
+        manufacturer == "xiaomi" || manufacturer == "redmi" || manufacturer == "poco" -> "miui"
+        manufacturer == "huawei" || manufacturer == "honor" -> "emui"
+        manufacturer == "oneplus" || brand == "oneplus" -> "oneplus"
+        manufacturer == "vivo" -> "funtouch"
+        else -> "stock"
+      }
+      when (oem) {
+        "coloros" -> {
+          // ColorOS startup-manager activities (names vary by version)
+          listOf(
+            "com.coloros.safecenter/.permission.startup.StartupAppListActivity",
+            "com.coloros.safecenter/.startupapp.StartupAppListActivity",
+            "com.coloros.oppoguardelf/com.coloros.powermanager.fuelgaue.PowerUsageModelActivity",
+            "com.oppo.safe/.permission.startup.StartupAppListActivity"
+          ).forEach { spec ->
+            val parts = spec.split("/")
+            candidates += Intent().apply {
+              component = ComponentName(parts[0], parts[1])
+              addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            } to spec
+          }
+        }
+        "miui" -> {
+          listOf(
+            "com.miui.securitycenter/com.miui.permcenter.autostart.AutoStartManagementActivity",
+            "com.miui.securitycenter/com.miui.powercenter.PowerSettings"
+          ).forEach { spec ->
+            val parts = spec.split("/")
+            candidates += Intent().apply {
+              component = ComponentName(parts[0], parts[1])
+              addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            } to spec
+          }
+        }
+        "emui" -> {
+          listOf(
+            "com.huawei.systemmanager/.optimize.process.ProtectActivity",
+            "com.huawei.systemmanager/.startupmgr.ui.StartupNormalAppListActivity"
+          ).forEach { spec ->
+            val parts = spec.split("/")
+            candidates += Intent().apply {
+              component = ComponentName(parts[0], parts[1])
+              addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            } to spec
+          }
+        }
+        "oneplus" -> {
+          candidates += Intent().apply {
+            component = ComponentName(
+              "com.oneplus.security",
+              "com.oneplus.security.chainlaunch.view.ChainLaunchAppListActivity"
+            )
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+          } to "com.oneplus.security/.chainlaunch.view.ChainLaunchAppListActivity"
+        }
+        "funtouch" -> {
+          candidates += Intent().apply {
+            component = ComponentName(
+              "com.iqoo.secure",
+              "com.iqoo.secure.ui.phoneoptimize.AddWhiteListActivity"
+            )
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+          } to "com.iqoo.secure/.ui.phoneoptimize.AddWhiteListActivity"
+        }
+      }
+      // Generic fallback: app details, where most ROMs surface "auto-launch" / "background" toggles
+      candidates += Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+        .setData(Uri.fromParts("package", context.packageName, null))
+        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) to "APPLICATION_DETAILS_SETTINGS"
+
+      for ((intent, label) in candidates) {
+        if (tryStartActivity(intent)) {
+          promise.resolve(mapOf("ok" to true, "oem" to oem, "intentUsed" to label))
+          return@AsyncFunction
+        }
+      }
+      promise.resolve(mapOf("ok" to false, "oem" to oem, "intentUsed" to null))
+    }
+
+    AsyncFunction("triggerSyncNow") { promise: Promise ->
+      moduleScope.launch {
+        try {
+          withContext(ioDispatcher) {
+            HealthBackgroundSync.scheduleSync(context.applicationContext, immediate = true)
+          }
+          promise.resolve(true)
+        } catch (e: Exception) {
+          Log.e(TAG, "triggerSyncNow failed", e)
+          promise.resolve(false)
+        }
+      }
+    }
   }
 
   private fun isHealthConnectAvailable(): Boolean {
+    return when (sdkStatusString()) {
+      "AVAILABLE" -> true
+      else -> false
+    }
+  }
+
+  private fun sdkStatusString(): String {
     return try {
-      val providerPackageName = "com.google.android.apps.healthdata"
-      when (HealthConnectClient.getSdkStatus(context, providerPackageName)) {
-        HealthConnectClient.SDK_AVAILABLE -> true
-        HealthConnectClient.SDK_UNAVAILABLE -> false
-        HealthConnectClient.SDK_UNAVAILABLE_PROVIDER_UPDATE_REQUIRED -> false
-        else -> false
+      when (HealthConnectClient.getSdkStatus(context, HEALTH_CONNECT_PACKAGE)) {
+        HealthConnectClient.SDK_AVAILABLE -> "AVAILABLE"
+        HealthConnectClient.SDK_UNAVAILABLE -> "UNAVAILABLE"
+        HealthConnectClient.SDK_UNAVAILABLE_PROVIDER_UPDATE_REQUIRED -> "PROVIDER_UPDATE_REQUIRED"
+        else -> "UNKNOWN"
       }
     } catch (e: Exception) {
       Log.e(TAG, "Error checking Health Connect availability", e)
+      "EXCEPTION"
+    }
+  }
+
+  private fun tryStartActivity(intent: Intent): Boolean {
+    return try {
+      val resolved = intent.resolveActivity(context.packageManager) != null
+      if (!resolved) return false
+      val activity = appContext.currentActivity
+      activity?.startActivity(intent) ?: context.startActivity(intent)
+      true
+    } catch (e: Exception) {
+      Log.w(TAG, "Failed to start activity for ${intent.action ?: intent.component}", e)
       false
+    }
+  }
+
+  private suspend fun collectDiagnostics(): Map<String, Any?> {
+    val app = context.applicationContext
+    val sdkStatus = sdkStatusString()
+
+    val (providerVersionCode, providerVersionName) = readProviderVersion()
+
+    // Only emit a boolean when we actually queried the permission controller.
+    // Otherwise the diagnostic screen / Sentry can't distinguish "denied" from
+    // "couldn't ask" (provider not installed, needs update, or query threw).
+    val requiredPermissions = setOf(
+      HealthPermission.getReadPermission(StepsRecord::class)
+    )
+    val (grantedPermissions, permissionsGranted) = if (sdkStatus == "AVAILABLE") {
+      try {
+        val granted = healthConnectClient.permissionController.getGrantedPermissions().toList()
+        granted to (granted.toSet().containsAll(requiredPermissions) as Boolean?)
+      } catch (e: Exception) {
+        Log.w(TAG, "getGrantedPermissions failed", e)
+        emptyList<String>() to (null as Boolean?)
+      }
+    } else {
+      emptyList<String>() to (null as Boolean?)
+    }
+
+    val workManagerState = try {
+      WorkManager.getInstance(app)
+        .getWorkInfosForUniqueWork(HealthBackgroundSync.WORK_NAME)
+        .get()
+        .lastOrNull()
+        ?.state
+        ?.name
+    } catch (e: Exception) {
+      Log.w(TAG, "WorkManager state lookup failed", e)
+      null
+    }
+
+    val ignoringBatteryOptimizations = try {
+      val pm = app.getSystemService(Context.POWER_SERVICE) as? PowerManager
+      pm?.isIgnoringBatteryOptimizations(app.packageName) ?: false
+    } catch (e: Exception) {
+      false
+    }
+
+    val telemetry = HealthBackgroundSync.readTelemetry(app)
+
+    return mapOf(
+      "sdkStatus" to sdkStatus,
+      "providerPackage" to HEALTH_CONNECT_PACKAGE,
+      "providerVersionCode" to providerVersionCode,
+      "providerVersionName" to providerVersionName,
+      "permissionsGranted" to permissionsGranted,
+      "grantedPermissions" to grantedPermissions,
+      "backgroundDeliveryEnabled" to telemetry["backgroundEnabled"],
+      "lastWorkerRunMs" to telemetry["lastRunMs"],
+      "lastWorkerResult" to telemetry["lastResult"],
+      "lastWorkerError" to telemetry["lastError"],
+      "lastChangesTokenIssuedMs" to telemetry["lastTokenIssuedMs"],
+      "workManagerState" to workManagerState,
+      "oemBrand" to Build.BRAND,
+      "oemManufacturer" to Build.MANUFACTURER,
+      "oemModel" to Build.MODEL,
+      "oemDevice" to Build.DEVICE,
+      "osSdkInt" to Build.VERSION.SDK_INT,
+      "osRelease" to Build.VERSION.RELEASE,
+      "ignoringBatteryOptimizations" to ignoringBatteryOptimizations
+    )
+  }
+
+  // Fallback snapshot whose shape matches HealthDiagnostics, used when
+  // collectDiagnostics throws. Build.* accessors don't throw, so they're safe
+  // even on the failure path.
+  private fun emptyDiagnostics(sdkStatus: String): Map<String, Any?> {
+    return mapOf(
+      "sdkStatus" to sdkStatus,
+      "providerPackage" to HEALTH_CONNECT_PACKAGE,
+      "providerVersionCode" to null,
+      "providerVersionName" to null,
+      "permissionsGranted" to null,
+      "grantedPermissions" to emptyList<String>(),
+      "backgroundDeliveryEnabled" to false,
+      "lastWorkerRunMs" to null,
+      "lastWorkerResult" to null,
+      "lastWorkerError" to null,
+      "lastChangesTokenIssuedMs" to null,
+      "workManagerState" to null,
+      "oemBrand" to Build.BRAND,
+      "oemManufacturer" to Build.MANUFACTURER,
+      "oemModel" to Build.MODEL,
+      "oemDevice" to Build.DEVICE,
+      "osSdkInt" to Build.VERSION.SDK_INT,
+      "osRelease" to Build.VERSION.RELEASE,
+      "ignoringBatteryOptimizations" to false
+    )
+  }
+
+  private fun readProviderVersion(): Pair<Long?, String?> {
+    return try {
+      val pm = context.packageManager
+      val info = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        pm.getPackageInfo(HEALTH_CONNECT_PACKAGE, PackageManager.PackageInfoFlags.of(0))
+      } else {
+        @Suppress("DEPRECATION")
+        pm.getPackageInfo(HEALTH_CONNECT_PACKAGE, 0)
+      }
+      val code = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+        info.longVersionCode
+      } else {
+        @Suppress("DEPRECATION")
+        info.versionCode.toLong()
+      }
+      code to info.versionName
+    } catch (e: PackageManager.NameNotFoundException) {
+      null to null
+    } catch (e: Exception) {
+      Log.w(TAG, "readProviderVersion failed", e)
+      null to null
     }
   }
 

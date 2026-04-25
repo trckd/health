@@ -25,6 +25,10 @@ class StepChangeSyncWorker(
       if (!granted.containsAll(requiredPermissions)) {
         Log.w(TAG, "Permissions missing; clearing background sync state")
         HealthBackgroundSync.disable(applicationContext)
+        HealthBackgroundSync.recordWorkerRun(
+          applicationContext,
+          result = "permission_missing"
+        )
         return Result.success()
       }
 
@@ -45,9 +49,18 @@ class StepChangeSyncWorker(
       }
 
       HealthBackgroundSync.scheduleSync(applicationContext)
+      HealthBackgroundSync.recordWorkerRun(
+        applicationContext,
+        result = if (hasChanges) "success_with_changes" else "success_no_changes"
+      )
       Result.success()
     } catch (e: Exception) {
       Log.e(TAG, "Failed to process Health Connect changes", e)
+      HealthBackgroundSync.recordWorkerRun(
+        applicationContext,
+        result = "retry",
+        error = "${e.javaClass.simpleName}: ${e.message ?: "no message"}"
+      )
       Result.retry()
     }
   }
