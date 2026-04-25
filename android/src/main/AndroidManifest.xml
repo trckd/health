@@ -4,12 +4,6 @@
     <!-- Health Connect permissions -->
     <uses-permission android:name="android.permission.health.READ_STEPS" />
     <uses-permission android:name="android.permission.health.READ_WEIGHT" />
-
-    <!-- Required so openBatteryOptimizationSettings can launch the per-app
-         whitelist dialog (ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).
-         Note: Play Console flags this; justification is the Health Connect
-         change-token WorkManager pipeline, which loses data when deferred. -->
-    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     
     <!-- Health Connect intent filters -->
     <queries>

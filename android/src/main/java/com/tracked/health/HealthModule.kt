@@ -360,11 +360,11 @@ class HealthModule : Module() {
 
     AsyncFunction("openBatteryOptimizationSettings") { promise: Promise ->
       val pkg = context.packageName
+      // ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS would launch the per-app
+      // whitelist dialog directly, but it requires the matching permission
+      // (which Play Console scrutinizes), so we skip it and route users to
+      // the generic settings instead.
       val candidates = listOf(
-        Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
-          .setData(Uri.parse("package:$pkg"))
-          .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-          to "REQUEST_IGNORE_BATTERY_OPTIMIZATIONS",
         Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
           .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
           to "IGNORE_BATTERY_OPTIMIZATION_SETTINGS",
