@@ -327,11 +327,10 @@ class HealthModule : Module() {
           promise.resolve(snapshot)
         } catch (e: Exception) {
           Log.e(TAG, "Error collecting health diagnostics", e)
-          // Never reject — diagnostics must be best-effort.
-          promise.resolve(mapOf(
-            "sdkStatus" to "EXCEPTION",
-            "error" to (e.message ?: e.javaClass.simpleName)
-          ))
+          // Never reject — diagnostics must be best-effort. Return a fully
+          // populated shell so JS callers reading non-nullable fields like
+          // `grantedPermissions.length` don't TypeError on the failure path.
+          promise.resolve(emptyDiagnostics("EXCEPTION"))
         }
       }
     }
@@ -582,6 +581,33 @@ class HealthModule : Module() {
       "osSdkInt" to Build.VERSION.SDK_INT,
       "osRelease" to Build.VERSION.RELEASE,
       "ignoringBatteryOptimizations" to ignoringBatteryOptimizations
+    )
+  }
+
+  // Fallback snapshot whose shape matches HealthDiagnostics, used when
+  // collectDiagnostics throws. Build.* accessors don't throw, so they're safe
+  // even on the failure path.
+  private fun emptyDiagnostics(sdkStatus: String): Map<String, Any?> {
+    return mapOf(
+      "sdkStatus" to sdkStatus,
+      "providerPackage" to HEALTH_CONNECT_PACKAGE,
+      "providerVersionCode" to null,
+      "providerVersionName" to null,
+      "permissionsGranted" to null,
+      "grantedPermissions" to emptyList<String>(),
+      "backgroundDeliveryEnabled" to false,
+      "lastWorkerRunMs" to null,
+      "lastWorkerResult" to null,
+      "lastWorkerError" to null,
+      "lastChangesTokenIssuedMs" to null,
+      "workManagerState" to null,
+      "oemBrand" to Build.BRAND,
+      "oemManufacturer" to Build.MANUFACTURER,
+      "oemModel" to Build.MODEL,
+      "oemDevice" to Build.DEVICE,
+      "osSdkInt" to Build.VERSION.SDK_INT,
+      "osRelease" to Build.VERSION.RELEASE,
+      "ignoringBatteryOptimizations" to false
     )
   }
 
