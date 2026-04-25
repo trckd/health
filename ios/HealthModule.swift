@@ -398,26 +398,28 @@ public class HealthModule: Module {
 
     AsyncFunction("getHealthDiagnostics") { (promise: Promise) in
       let device = UIDevice.current
-      // HealthKit deliberately doesn't expose read-auth state, so
+      // Use NSNull() rather than Swift nil — Optional<Any> values are dropped
+      // when the dictionary is bridged to JS, producing `undefined` instead of
+      // `null`. HealthKit deliberately doesn't expose read-auth state, so
       // permissionsGranted is null rather than misleadingly positive.
-      let snapshot: [String: Any?] = [
+      let snapshot: [String: Any] = [
         "sdkStatus": HKHealthStore.isHealthDataAvailable() ? "AVAILABLE" : "UNAVAILABLE",
-        "providerPackage": nil,
-        "providerVersionCode": nil,
-        "providerVersionName": nil,
-        "permissionsGranted": nil,
+        "providerPackage": NSNull(),
+        "providerVersionCode": NSNull(),
+        "providerVersionName": NSNull(),
+        "permissionsGranted": NSNull(),
         "grantedPermissions": [],
         "backgroundDeliveryEnabled": self.observerStarted,
-        "lastWorkerRunMs": nil,
-        "lastWorkerResult": nil,
-        "lastWorkerError": nil,
-        "lastChangesTokenIssuedMs": nil,
-        "workManagerState": nil,
+        "lastWorkerRunMs": NSNull(),
+        "lastWorkerResult": NSNull(),
+        "lastWorkerError": NSNull(),
+        "lastChangesTokenIssuedMs": NSNull(),
+        "workManagerState": NSNull(),
         "oemBrand": "Apple",
         "oemManufacturer": "Apple",
         "oemModel": device.model,
         "oemDevice": device.model,
-        "osSdkInt": nil,
+        "osSdkInt": NSNull(),
         "osRelease": device.systemVersion,
         "ignoringBatteryOptimizations": true
       ]
