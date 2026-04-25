@@ -20,7 +20,40 @@ internal object HealthBackgroundSync {
   private const val PREFS_FILE = "com.tracked.health.background"
   private const val KEY_STEPS_TOKEN = "steps_changes_token"
   private const val KEY_FREQUENCY = "update_frequency"
-  private const val WORK_NAME = "HealthStepChangeSync"
+  private const val KEY_LAST_RUN_MS = "last_worker_run_ms"
+  private const val KEY_LAST_RESULT = "last_worker_result"
+  private const val KEY_LAST_ERROR = "last_worker_error"
+  private const val KEY_LAST_TOKEN_ISSUED_MS = "last_token_issued_ms"
+  internal const val WORK_NAME = "HealthStepChangeSync"
+
+  internal fun recordWorkerRun(context: Context, result: String, error: String? = null) {
+    val edit = preferences(context.applicationContext).edit()
+      .putLong(KEY_LAST_RUN_MS, System.currentTimeMillis())
+      .putString(KEY_LAST_RESULT, result)
+    if (error != null) edit.putString(KEY_LAST_ERROR, error)
+    else edit.remove(KEY_LAST_ERROR)
+    edit.apply()
+  }
+
+  fun readTelemetry(context: Context): Map<String, Any?> {
+    val prefs = preferences(context.applicationContext)
+    val lastRun = prefs.getLong(KEY_LAST_RUN_MS, 0L).takeIf { it > 0L }
+    return mapOf(
+      "backgroundEnabled" to (prefs.getString(KEY_STEPS_TOKEN, null) != null),
+      "frequency" to prefs.getString(KEY_FREQUENCY, null),
+      "lastRunMs" to lastRun,
+      "lastResult" to prefs.getString(KEY_LAST_RESULT, null),
+      "lastError" to prefs.getString(KEY_LAST_ERROR, null),
+      "lastTokenIssuedMs" to prefs.getLong(KEY_LAST_TOKEN_ISSUED_MS, 0L).takeIf { it > 0L }
+    )
+  }
+
+  private fun stampToken(context: Context, token: String) {
+    preferences(context.applicationContext).edit()
+      .putString(KEY_STEPS_TOKEN, token)
+      .putLong(KEY_LAST_TOKEN_ISSUED_MS, System.currentTimeMillis())
+      .apply()
+  }
 
   suspend fun enable(context: Context, frequency: String): Boolean {
     val appContext = context.applicationContext
@@ -39,8 +72,8 @@ internal object HealthBackgroundSync {
       recordTypes = setOf(StepsRecord::class)
     )
     val token = client.getChangesToken(tokenRequest)
+    stampToken(appContext, token)
     preferences(appContext).edit()
-      .putString(KEY_STEPS_TOKEN, token)
       .putString(KEY_FREQUENCY, frequency)
       .apply()
 
@@ -90,7 +123,7 @@ internal object HealthBackgroundSync {
 
     val currentToken = prefs.getString(KEY_STEPS_TOKEN, null)
       ?: client.getChangesToken(tokenRequest).also { token ->
-        prefs.edit().putString(KEY_STEPS_TOKEN, token).apply()
+        stampToken(appContext, token)
       }
 
     var hasChanges = false
@@ -110,7 +143,7 @@ internal object HealthBackgroundSync {
         }
         Log.w(TAG, "Changes token expired (attempt $tokenRetries/$maxTokenRetries), requesting a fresh token")
         nextToken = client.getChangesToken(tokenRequest)
-        prefs.edit().putString(KEY_STEPS_TOKEN, nextToken).apply()
+        stampToken(appContext, nextToken)
         continue
       }
 
@@ -122,7 +155,7 @@ internal object HealthBackgroundSync {
       keepReading = response.hasMore
     }
 
-    prefs.edit().putString(KEY_STEPS_TOKEN, nextToken).apply()
+    stampToken(appContext, nextToken)
     return hasChanges
   }
 

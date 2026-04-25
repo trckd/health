@@ -2,9 +2,12 @@
 export type {
   BodyWeightSample,
   BodyWeightUpdateEvent,
+  HealthDiagnostics,
   HealthModuleEvents,
   HealthModuleInterface,
   HealthSubscription,
+  OpenOemSettingsResult,
+  OpenSettingsResult,
   StepUpdateEvent,
   UpdateFrequency,
 } from "./module";
