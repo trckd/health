@@ -425,20 +425,23 @@ public class HealthModule: Module {
     }
 
     AsyncFunction("openHealthConnectSettings") { (promise: Promise) in
-      // iOS routes users to the Health app via the system settings URL.
-      if let url = URL(string: "x-apple-health://"), UIApplication.shared.canOpenURL(url) {
-        UIApplication.shared.open(url, options: [:]) { ok in
-          DispatchQueue.main.async { promise.resolve(ok) }
+      // UIApplication APIs must run on the main thread; AsyncFunction blocks
+      // execute on the module's background queue by default.
+      DispatchQueue.main.async {
+        if let url = URL(string: "x-apple-health://"), UIApplication.shared.canOpenURL(url) {
+          UIApplication.shared.open(url, options: [:]) { ok in
+            promise.resolve(ok)
+          }
+          return
         }
-        return
-      }
-      if let url = URL(string: UIApplication.openSettingsURLString) {
-        UIApplication.shared.open(url, options: [:]) { ok in
-          DispatchQueue.main.async { promise.resolve(ok) }
+        if let url = URL(string: UIApplication.openSettingsURLString) {
+          UIApplication.shared.open(url, options: [:]) { ok in
+            promise.resolve(ok)
+          }
+          return
         }
-        return
+        promise.resolve(false)
       }
-      promise.resolve(false)
     }
 
     AsyncFunction("openBatteryOptimizationSettings") { (promise: Promise) in

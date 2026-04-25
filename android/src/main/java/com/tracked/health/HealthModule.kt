@@ -523,19 +523,23 @@ class HealthModule : Module() {
 
     val (providerVersionCode, providerVersionName) = readProviderVersion()
 
-    val grantedPermissions = if (sdkStatus == "AVAILABLE") {
-      try {
-        healthConnectClient.permissionController.getGrantedPermissions().toList()
-      } catch (e: Exception) {
-        Log.w(TAG, "getGrantedPermissions failed", e)
-        emptyList()
-      }
-    } else emptyList()
-
+    // Only emit a boolean when we actually queried the permission controller.
+    // Otherwise the diagnostic screen / Sentry can't distinguish "denied" from
+    // "couldn't ask" (provider not installed, needs update, or query threw).
     val requiredPermissions = setOf(
       HealthPermission.getReadPermission(StepsRecord::class)
     )
-    val permissionsGranted = grantedPermissions.toSet().containsAll(requiredPermissions)
+    val (grantedPermissions, permissionsGranted) = if (sdkStatus == "AVAILABLE") {
+      try {
+        val granted = healthConnectClient.permissionController.getGrantedPermissions().toList()
+        granted to (granted.toSet().containsAll(requiredPermissions) as Boolean?)
+      } catch (e: Exception) {
+        Log.w(TAG, "getGrantedPermissions failed", e)
+        emptyList<String>() to (null as Boolean?)
+      }
+    } else {
+      emptyList<String>() to (null as Boolean?)
+    }
 
     val workManagerState = try {
       WorkManager.getInstance(app)
