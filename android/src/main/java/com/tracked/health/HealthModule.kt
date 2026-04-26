@@ -18,6 +18,7 @@ import androidx.health.connect.client.request.ReadRecordsRequest
 import androidx.health.connect.client.time.TimeRangeFilter
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
+import kotlinx.coroutines.flow.first
 import expo.modules.kotlin.Promise
 import expo.modules.kotlin.exception.Exceptions
 import expo.modules.kotlin.modules.Module
@@ -542,8 +543,8 @@ class HealthModule : Module() {
 
     val workManagerState = try {
       WorkManager.getInstance(app)
-        .getWorkInfosForUniqueWork(HealthBackgroundSync.WORK_NAME)
-        .get()
+        .getWorkInfosForUniqueWorkFlow(HealthBackgroundSync.WORK_NAME)
+        .first()
         .lastOrNull()
         ?.state
         ?.name
