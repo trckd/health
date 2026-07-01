@@ -1,12 +1,23 @@
-// Pin the timezone to a negative-UTC-offset zone BEFORE importing the module
-// under test. This is deliberate: these helpers exist to work in the device's
-// *local* calendar day, and a UTC-based implementation only diverges from a
-// local one when the local date differs from the UTC date — which happens in
-// the Americas during local evening hours. A test that runs in UTC (or pins
-// `now` to UTC midnight) would mask exactly the bug these helpers guard against.
-process.env.TZ = "America/Los_Angeles";
-
+// These tests pin the timezone to America/Los_Angeles so they exercise the
+// local-vs-UTC boundary the date helpers guard against — under UTC the local
+// and UTC dates are identical and a broken (UTC-based) implementation would
+// pass silently.
+//
+// The zone MUST be set before the process starts — via the `test` npm script
+// and the CI workflow — not with `process.env.TZ = ...` inside this file: Node
+// caches the zone at startup, so a runtime reassignment is a no-op on hosts
+// whose real zone differs (e.g. a UTC CI runner), which would silently mask the
+// very bug under test. The guard below fails fast with a clear message if the
+// suite wasn't launched in the expected zone.
 import { getDayBoundsMs, getTodayInUserTimezone } from "../date-utils";
+
+// 2026-07-01T06:30Z is still June 30 in Los Angeles but July 1 in UTC.
+if (new Date("2026-07-01T06:30:00.000Z").getDate() !== 30) {
+  throw new Error(
+    "date-utils tests require TZ=America/Los_Angeles. Run `yarn test` (which " +
+      "sets it) instead of invoking jest directly in another timezone.",
+  );
+}
 
 describe("getDayBoundsMs", () => {
   it("returns local midnight through the last millisecond of the day", () => {
