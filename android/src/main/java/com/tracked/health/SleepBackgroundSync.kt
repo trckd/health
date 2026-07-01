@@ -96,12 +96,19 @@ internal object SleepBackgroundSync {
     var hasChanges = false
     var nextToken = currentToken
     var keepReading = true
+    var tokenRetries = 0
+    val maxTokenRetries = 3
 
     while (keepReading) {
       val response = client.getChanges(nextToken)
 
       if (response.changesTokenExpired) {
-        Log.w(TAG, "Sleep changes token expired; requesting a fresh token")
+        tokenRetries++
+        if (tokenRetries > maxTokenRetries) {
+          Log.e(TAG, "Sleep changes token expired $maxTokenRetries times; aborting")
+          break
+        }
+        Log.w(TAG, "Sleep changes token expired (attempt $tokenRetries/$maxTokenRetries); requesting a fresh token")
         nextToken = client.getChangesToken(tokenRequest)
         prefs.edit().putString(KEY_SLEEP_TOKEN, nextToken).apply()
         continue

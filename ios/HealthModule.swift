@@ -727,24 +727,34 @@ public class HealthModule: Module {
 
     var sessions: [[String: Any]] = []
     var currentSessionSamples: [HKCategorySample] = []
+    // Track the furthest end time seen in the current session. Samples arrive
+    // sorted by startDate, but they overlap (e.g. a full-night InBed sample
+    // followed by shorter Asleep/Awake samples nested inside it), so the gap
+    // must be measured against the session's max end — not just the last
+    // sample's end — or a nested sample would be wrongly split into its own
+    // session.
+    var currentSessionEnd: Date?
 
     for sample in samples {
       if currentSessionSamples.isEmpty {
         currentSessionSamples.append(sample)
+        currentSessionEnd = sample.endDate
       } else {
         // Check if this sample overlaps with or is near the current session
-        let lastSample = currentSessionSamples.last!
-        let gap = sample.startDate.timeIntervalSince(lastSample.endDate)
+        let sessionEnd = currentSessionEnd ?? sample.startDate
+        let gap = sample.startDate.timeIntervalSince(sessionEnd)
 
         // If gap is less than 30 minutes, consider it part of the same session
         if gap < 1800 {
           currentSessionSamples.append(sample)
+          currentSessionEnd = max(sessionEnd, sample.endDate)
         } else {
           // Create a session from current samples
           if let session = createSleepSession(from: currentSessionSamples) {
             sessions.append(session)
           }
           currentSessionSamples = [sample]
+          currentSessionEnd = sample.endDate
         }
       }
     }
@@ -792,13 +802,15 @@ public class HealthModule: Module {
   }
 
   private func startSleepObservation(sleepAnalysisType: HKCategoryType) {
-    // Clean up any existing observer
+    // Already observing — return before touching anything so repeated calls
+    // (e.g. on UI state changes) don't stop and re-create the observer.
+    if sleepObservationStarted && sleepObserver != nil { return }
+
+    // Clean up any stale observer before starting a new one
     if let existingObserver = sleepObserver {
       healthStore.stop(existingObserver)
       sleepObserver = nil
     }
-
-    if sleepObservationStarted && sleepObserver != nil { return }
 
     if sleepAnchor == nil {
       sleepAnchor = loadSleepAnchor()
