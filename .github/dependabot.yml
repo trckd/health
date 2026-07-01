@@ -9,6 +9,13 @@ updates:
     groups:
       dev-dependencies:
         dependency-type: development
+    ignore:
+      # Most devDependencies here are the Expo / React Native toolchain
+      # (expo, expo-modules-core, expo-module-scripts, react-native, and jest via
+      # jest-expo). Their major versions are tied to the Expo SDK and must be
+      # upgraded deliberately, so only take minor/patch updates automatically.
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
 
   # Keep the GitHub Actions used by the CI workflow up to date
   - package-ecosystem: github-actions
