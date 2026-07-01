@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Platform } from "react-native";
 
 // Import the health module with its type
 import { Health, BodyWeightSample } from "../..";
@@ -6,6 +7,14 @@ import { AuthStatus } from "../../types";
 import { getDayBoundsMs, getTodayInUserTimezone } from "../steps/date-utils";
 
 export { AuthStatus, BodyWeightSample };
+
+// The two native platforms share this implementation and differ only in how
+// the underlying health provider is named in user-facing messages.
+const healthServiceName = Platform.select({
+  ios: "HealthKit",
+  android: "Health Connect",
+  default: "Health Service",
+});
 
 export function useBodyWeight(date?: string) {
   const [bodyWeightSamples, setBodyWeightSamples] = useState<
@@ -24,7 +33,7 @@ export function useBodyWeight(date?: string) {
     async (dateString?: string) => {
       try {
         if (!Health.isHealthDataAvailable) {
-          setError("HealthKit is not available on this device");
+          setError(`${healthServiceName} is not available on this device`);
           return;
         }
 
@@ -45,7 +54,7 @@ export function useBodyWeight(date?: string) {
 
         setError(null);
       } catch (err) {
-        console.error("HealthKit body weight error:", err);
+        console.error(`${healthServiceName} body weight error:`, err);
         setError("Error getting body weight data");
       } finally {
         setLoading(false);
@@ -113,7 +122,7 @@ export function useBodyWeight(date?: string) {
 
   const requestInitialization = async () => {
     if (!Health.isHealthDataAvailable) {
-      setError("HealthKit is not available on this device");
+      setError(`${healthServiceName} is not available on this device`);
       return false;
     }
 
@@ -133,7 +142,7 @@ export function useBodyWeight(date?: string) {
         return false;
       }
     } catch (err) {
-      setError("Cannot access HealthKit");
+      setError(`Cannot access ${healthServiceName}`);
       setIsInitialized(false);
       setAuthStatus(AuthStatus.NotAuthorized);
       console.error(err);
