@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Typecheck & test
+    runs-on: ubuntu-latest
+    # Pin a stable non-UTC timezone at process launch so the date-utils tests
+    # exercise the local-vs-UTC boundary deterministically. A UTC runner would
+    # silently mask the off-by-one these helpers guard against, and reassigning
+    # process.env.TZ at runtime does not reliably change the cached zone — it
+    # must be set in the environment before Node starts.
+    env:
+      TZ: America/Los_Angeles
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: yarn
+
+      # --ignore-scripts skips the `prepare` build; typecheck and tests run
+      # against `src` directly, so the build isn't needed here.
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile --ignore-scripts
+
+      - name: Typecheck
+        run: npx tsc --noEmit -p tsconfig.json
+
+      - name: Test
+        run: npx jest --ci
