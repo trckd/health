@@ -86,7 +86,7 @@ describe("useSteps", () => {
     expect(health.requestAuthorization).toHaveBeenCalled();
     expect(health.getStepCount).toHaveBeenCalled();
     await waitFor(() => expect(result.current.isInitialized).toBe(true));
-    expect(result.current.steps).toBe(4210);
+    await waitFor(() => expect(result.current.steps).toBe(4210));
     expect(result.current.error).toBeNull();
   });
 
@@ -128,7 +128,7 @@ describe("useSteps", () => {
       health.stepListeners.at(-1)({ steps: 8000, date: today });
     });
 
-    expect(result.current.steps).toBe(8000);
+    await waitFor(() => expect(result.current.steps).toBe(8000));
   });
 
   it("ignores background updates while viewing a past date", async () => {
