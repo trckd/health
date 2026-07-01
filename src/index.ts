@@ -8,6 +8,10 @@ export type {
   HealthSubscription,
   OpenOemSettingsResult,
   OpenSettingsResult,
+  SleepSession,
+  SleepStage,
+  SleepStageType,
+  SleepUpdateEvent,
   StepUpdateEvent,
   UpdateFrequency,
 } from "./module";
@@ -20,3 +24,4 @@ export { AuthStatus } from "./types";
 // previously drifted between copies).
 export { useSteps } from "./features/steps/use-steps";
 export { useBodyWeight } from "./features/bodyweight/use-body-weight";
+export { useSleep } from "./features/sleep";

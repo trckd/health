@@ -18,6 +18,50 @@ export interface BodyWeightSample {
 
 export type BodyWeightUpdateEvent = BodyWeightSample;
 
+export type SleepStageType =
+  | "InBed"
+  | "Awake"
+  | "AsleepREM"
+  | "AsleepCore"
+  | "AsleepDeep"
+  | "Sleeping"
+  | "Light"
+  | "Deep"
+  | "REM"
+  | "AwakeInBed"
+  | "OutOfBed"
+  | "Unknown";
+
+export interface SleepStage {
+  /** The type of sleep stage */
+  type: SleepStageType;
+  /** Start time in milliseconds since epoch */
+  startTime: number;
+  /** End time in milliseconds since epoch */
+  endTime: number;
+  /** Duration in milliseconds */
+  duration: number;
+}
+
+export interface SleepSession {
+  /** Start time of the sleep session in milliseconds since epoch */
+  startTime: number;
+  /** End time of the sleep session in milliseconds since epoch */
+  endTime: number;
+  /** Total duration in milliseconds */
+  totalDuration: number;
+  /** ISO-8601 timestamp string for start */
+  isoStartDate: string;
+  /** ISO-8601 timestamp string for end */
+  isoEndDate: string;
+  /** Array of sleep stages within this session */
+  stages: SleepStage[];
+  /** Optional source of the sleep data */
+  source?: string;
+}
+
+export type SleepUpdateEvent = SleepSession;
+
 export type HealthSubscription = {
   remove(): void;
 };
@@ -25,6 +69,7 @@ export type HealthSubscription = {
 export type HealthModuleEvents = {
   onStepDataUpdate: (event: StepUpdateEvent) => void;
   onBodyWeightDataUpdate: (event: BodyWeightUpdateEvent) => void;
+  onSleepDataUpdate: (event: SleepUpdateEvent) => void;
 };
 
 export type UpdateFrequency = "immediate" | "hourly" | "daily" | "weekly";
@@ -110,6 +155,20 @@ export interface HealthModuleInterface {
    */
   getLatestBodyWeight(): Promise<BodyWeightSample | null>;
   /**
+   * Get sleep sessions for a specific date range
+   * @param startDate - The start date in milliseconds since epoch
+   * @param endDate - The end date in milliseconds since epoch
+   */
+  getSleepSessions(startDate: number, endDate: number): Promise<SleepSession[]>;
+  /**
+   * Enable sleep data change notifications.
+   */
+  enableSleepUpdates(frequency: UpdateFrequency): Promise<boolean>;
+  /**
+   * Disable sleep data change notifications.
+   */
+  disableSleepUpdates(): Promise<boolean>;
+  /**
    * Returns a fresh diagnostic snapshot of the health integration. Used by the
    * step-tracking diagnostic screen and Sentry tag enricher. Never throws —
    * fields are populated best-effort.
@@ -153,6 +212,9 @@ declare class HealthModule
   disableBodyWeightUpdates(): Promise<boolean>;
   getBodyWeightSamples(startDate: number, endDate: number): Promise<BodyWeightSample[]>;
   getLatestBodyWeight(): Promise<BodyWeightSample | null>;
+  getSleepSessions(startDate: number, endDate: number): Promise<SleepSession[]>;
+  enableSleepUpdates(frequency: UpdateFrequency): Promise<boolean>;
+  disableSleepUpdates(): Promise<boolean>;
   getHealthDiagnostics(): Promise<HealthDiagnostics>;
   openHealthConnectSettings(): Promise<boolean>;
   openBatteryOptimizationSettings(): Promise<OpenSettingsResult>;

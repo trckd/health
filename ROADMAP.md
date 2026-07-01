@@ -26,15 +26,21 @@
     then promote doc snippets/blog release; outline metrics to monitor
     (usage, error rates, permission denial).
 
+  Completed Integrations
+
+      ✅ Sleep duration/stages (popular retention lever) - Implemented with
+         full iOS (HealthKit) and Android (Health Connect) support, including
+         sleep sessions, stage breakdown (REM, Deep, Core/Light, Awake),
+         background delivery, and useSleep React hook.
+
   Future Integrations To Queue
 
       1. Heart rate & resting trends (high engagement win for fitness
          apps).
       2. Workouts & energy burned (aligns with coaching features).
-      3. Sleep duration/stages (popular retention lever).
-      4. Body composition (body fat %, lean mass) once weight API is
+      3. Body composition (body fat %, lean mass) once weight API is
          stable.
-      5. Hydration or nutrition data if your product roadmap includes
+      4. Hydration or nutrition data if your product roadmap includes
          coaching/nutrition.
 
   Next steps: pick API design scope (read-only vs read/write), then create
