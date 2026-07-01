@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 // Import the health module with its type
 import { Health, BodyWeightSample } from "../..";
 import { AuthStatus } from "../../types";
-import { getDayBoundsMs } from "../steps/date-utils";
+import { getDayBoundsMs, getTodayInUserTimezone } from "../steps/date-utils";
 
 export { AuthStatus, BodyWeightSample };
 
@@ -74,8 +74,11 @@ export function useBodyWeight(date?: string) {
           // Update latest weight
           setLatestWeight(event);
 
-          // If we're viewing today's data, add the new sample to the list
-          const today = new Date().toISOString().split('T')[0];
+          // If we're viewing today's data, add the new sample to the list.
+          // Compare against the user's local date (not the UTC date) so evening
+          // updates in negative-UTC timezones aren't dropped by an off-by-one
+          // day mismatch.
+          const today = getTodayInUserTimezone();
           if (date === today) {
             setBodyWeightSamples((prev) => [...prev, event]);
           }

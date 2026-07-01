@@ -4,7 +4,7 @@ import { Platform } from "react-native";
 // Import the health module with its type
 import { Health, StepUpdateEvent } from "../..";
 import { AuthStatus } from "../../types";
-import { getDayBoundsMs } from "./date-utils";
+import { getDayBoundsMs, getTodayInUserTimezone } from "./date-utils";
 
 export { AuthStatus };
 
@@ -56,8 +56,10 @@ export function useSteps(date: string) {
   // Set up background delivery and event listeners
   useEffect(() => {
     const subscription = Health.addListener("onStepDataUpdate", (event: StepUpdateEvent) => {
-      // Only update steps if we're looking at today's date
-      const today = new Date().toISOString().split("T")[0];
+      // Only update steps if we're looking at today's date. Compare against the
+      // user's local date (not the UTC date) so evening updates in negative-UTC
+      // timezones aren't dropped by an off-by-one day mismatch.
+      const today = getTodayInUserTimezone();
       if (date === today && event.steps !== undefined) {
         setSteps(event.steps);
       }
