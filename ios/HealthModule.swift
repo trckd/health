@@ -816,8 +816,6 @@ public class HealthModule: Module {
       sleepAnchor = loadSleepAnchor()
     }
 
-    sleepObservationStarted = true
-
     let observer = HKObserverQuery(sampleType: sleepAnalysisType, predicate: nil) { [weak self] _, completionHandler, error in
       guard let self else {
         completionHandler()
@@ -837,6 +835,11 @@ public class HealthModule: Module {
 
     healthStore.execute(observer)
     sleepObserver = observer
+    // Set the started latch only after the observer is assigned. If it were set
+    // first, a concurrent/re-entrant call would see (started == true,
+    // sleepObserver == nil), slip past the guard above, and create a duplicate
+    // observer — producing duplicate onSleepDataUpdate events.
+    sleepObservationStarted = true
 
     fetchSleepChanges(sleepAnalysisType: sleepAnalysisType, completion: nil)
   }
@@ -872,12 +875,18 @@ public class HealthModule: Module {
 
       let sessions = self.groupSleepSamples(categorySamples)
 
-      guard let latestSession = sessions.last else {
+      guard !sessions.isEmpty else {
         return
       }
 
       DispatchQueue.main.async {
-        self.sendEvent("onSleepDataUpdate", latestSession)
+        // Emit one event per new session. A single background sync can surface
+        // several nights at once (e.g. a device backfill), and the JS listener
+        // handles each session independently — sending only sessions.last would
+        // silently drop the rest until a manual refresh.
+        for session in sessions {
+          self.sendEvent("onSleepDataUpdate", session)
+        }
       }
     }
 
