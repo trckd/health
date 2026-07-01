@@ -3,15 +3,13 @@ package com.tracked.health
 import android.content.Context
 import android.util.Log
 import androidx.health.connect.client.HealthConnectClient
+import androidx.health.connect.client.changes.UpsertionChange
 import androidx.health.connect.client.permission.HealthPermission
 import androidx.health.connect.client.records.SleepSessionRecord
 import androidx.health.connect.client.request.ChangesTokenRequest
-import androidx.health.connect.client.request.ReadRecordsRequest
-import androidx.health.connect.client.time.TimeRangeFilter
 import androidx.work.ExistingWorkPolicy
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
-import java.time.Instant
 import java.time.ZoneId
 import java.util.concurrent.TimeUnit
 
@@ -79,7 +77,13 @@ internal object SleepBackgroundSync {
     )
   }
 
-  suspend fun pullLatestChanges(context: Context): Boolean {
+  /**
+   * Drains the Health Connect changes feed for sleep sessions and returns every
+   * upserted session (mapped for JS). Processing the actual change set — rather
+   * than reading a single "latest" record — means a multi-night backfill or a
+   * correction to an older session is fully delivered instead of dropped.
+   */
+  suspend fun pullLatestChanges(context: Context): List<Map<String, Any?>> {
     val appContext = context.applicationContext
     val client = HealthConnectClient.getOrCreate(appContext)
     val prefs = preferences(appContext)
@@ -93,7 +97,7 @@ internal object SleepBackgroundSync {
         prefs.edit().putString(KEY_SLEEP_TOKEN, token).apply()
       }
 
-    var hasChanges = false
+    val changedSessions = mutableListOf<Map<String, Any?>>()
     var nextToken = currentToken
     var keepReading = true
     var tokenRetries = 0
@@ -114,8 +118,9 @@ internal object SleepBackgroundSync {
         continue
       }
 
-      if (response.changes.isNotEmpty()) {
-        hasChanges = true
+      for (change in response.changes) {
+        val record = (change as? UpsertionChange)?.record as? SleepSessionRecord ?: continue
+        changedSessions += mapSleepSession(record)
       }
 
       nextToken = response.nextChangesToken
@@ -123,27 +128,7 @@ internal object SleepBackgroundSync {
     }
 
     prefs.edit().putString(KEY_SLEEP_TOKEN, nextToken).apply()
-    return hasChanges
-  }
-
-  suspend fun readLatestSleepSession(context: Context): Map<String, Any?>? {
-    val appContext = context.applicationContext
-    val client = HealthConnectClient.getOrCreate(appContext)
-
-    // Get sleep sessions from the last 7 days
-    val now = Instant.now()
-    val sevenDaysAgo = now.minusSeconds(7 * 24 * 60 * 60)
-
-    val response = client.readRecords(
-      ReadRecordsRequest(
-        recordType = SleepSessionRecord::class,
-        timeRangeFilter = TimeRangeFilter.between(sevenDaysAgo, now)
-      )
-    )
-
-    val record = response.records.maxByOrNull { it.endTime } ?: return null
-
-    return mapSleepSession(record)
+    return changedSessions
   }
 
   private fun sleepStageTypeToString(stage: Int): String {

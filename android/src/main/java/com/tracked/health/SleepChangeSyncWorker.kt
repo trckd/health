@@ -26,15 +26,14 @@ class SleepChangeSyncWorker(
         return Result.success()
       }
 
-      val hasChanges = SleepBackgroundSync.pullLatestChanges(applicationContext)
-      if (hasChanges) {
-        val latestSession = SleepBackgroundSync.readLatestSleepSession(applicationContext)
+      val changedSessions = SleepBackgroundSync.pullLatestChanges(applicationContext)
+      if (changedSessions.isNotEmpty()) {
         val module = HealthModule.getInstance()
-        if (latestSession != null && module != null) {
-          module.sendSleepDataUpdate(latestSession)
-          Log.d(TAG, "Dispatched sleep update event")
+        if (module != null) {
+          changedSessions.forEach { module.sendSleepDataUpdate(it) }
+          Log.d(TAG, "Dispatched ${changedSessions.size} sleep update event(s)")
         } else {
-          Log.d(TAG, "No latest sleep session available after change notification")
+          Log.d(TAG, "Module instance unavailable; dropped ${changedSessions.size} sleep session(s)")
         }
       } else {
         Log.d(TAG, "No sleep changes detected")
