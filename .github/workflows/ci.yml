@@ -18,7 +18,7 @@ jobs:
     env:
       TZ: America/Los_Angeles
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v5
         with:
