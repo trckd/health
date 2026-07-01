@@ -225,9 +225,10 @@ export function useSteps(date: string) {
       const endTime = new Date(localDate);
       endTime.setHours(23, 59, 59, 999);
 
+      // getStepCount expects timestamps in milliseconds since epoch.
       const totalSteps = await Health.getStepCount(
-        Math.floor(startTime.getTime() / 1000),
-        Math.floor(endTime.getTime() / 1000)
+        startTime.getTime(),
+        endTime.getTime()
       );
       
       setSteps(totalSteps);
@@ -244,7 +245,10 @@ export function useSteps(date: string) {
     if (!isAuthorized) return;
 
     const subscription = Health.addListener('onStepDataUpdate', (event: StepUpdateEvent) => {
-      const today = new Date().toISOString().split('T')[0];
+      // Compare against the local calendar date (not the UTC date from
+      // toISOString) so evening updates in negative-UTC timezones still match.
+      const now = new Date();
+      const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
       if (date === today) {
         setSteps(event.steps);
       }
