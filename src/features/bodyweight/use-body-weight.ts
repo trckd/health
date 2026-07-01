@@ -1,9 +1,10 @@
 import { Platform } from "react-native";
 
-// Platform-specific imports
+// iOS and Android share a single implementation (`use-body-weight.native`).
+// Only the native platforms load it, so importing this module never pulls the
+// native health module in on web or other unsupported platforms.
 const useBodyWeightImplementation = Platform.select({
-  ios: () => require("./use-body-weight.ios").useBodyWeight,
-  android: () => require("./use-body-weight.android").useBodyWeight,
+  native: () => require("./use-body-weight.native").useBodyWeight,
   default: () => {
     // Fallback for web or other platforms
     return () => ({
@@ -19,6 +20,6 @@ const useBodyWeightImplementation = Platform.select({
 
 export const useBodyWeight = useBodyWeightImplementation;
 
-// Re-export types from the iOS implementation (they're the same for both platforms)
-export type { BodyWeightSample } from "./use-body-weight.ios";
-export { AuthStatus } from "./use-body-weight.ios";
+// Re-export types
+export type { BodyWeightSample } from "./use-body-weight.native";
+export { AuthStatus } from "../../types";

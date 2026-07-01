@@ -8,6 +8,19 @@
     <!-- Health Connect intent filters -->
     <queries>
         <package android:name="com.google.android.apps.healthdata" />
+        <!-- Play Store, so the install fallback in openHealthConnectSettings
+             (market://details?id=...) resolves on Android 11+ devices. -->
+        <package android:name="com.android.vending" />
+        <!-- OEM safety-center packages so the diagnostic screen can deep-link
+             into auto-launch / background-activity settings on aggressive ROMs
+             (ColorOS, MIUI, EMUI, OnePlus, Vivo). -->
+        <package android:name="com.coloros.safecenter" />
+        <package android:name="com.coloros.oppoguardelf" />
+        <package android:name="com.oppo.safe" />
+        <package android:name="com.miui.securitycenter" />
+        <package android:name="com.huawei.systemmanager" />
+        <package android:name="com.oneplus.security" />
+        <package android:name="com.iqoo.secure" />
         <intent>
             <action android:name="androidx.health.ACTION_SHOW_PERMISSIONS_RATIONALE" />
         </intent>

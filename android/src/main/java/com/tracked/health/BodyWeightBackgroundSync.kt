@@ -96,12 +96,19 @@ internal object BodyWeightBackgroundSync {
     var hasChanges = false
     var nextToken = currentToken
     var keepReading = true
+    var tokenRetries = 0
+    val maxTokenRetries = 3
 
     while (keepReading) {
       val response = client.getChanges(nextToken)
 
       if (response.changesTokenExpired) {
-        Log.w(TAG, "Bodyweight changes token expired; requesting a fresh token")
+        tokenRetries++
+        if (tokenRetries > maxTokenRetries) {
+          Log.e(TAG, "Bodyweight changes token expired $maxTokenRetries times; aborting")
+          break
+        }
+        Log.w(TAG, "Bodyweight changes token expired (attempt $tokenRetries/$maxTokenRetries); requesting a fresh token")
         nextToken = client.getChangesToken(tokenRequest)
         prefs.edit().putString(KEY_WEIGHT_TOKEN, nextToken).apply()
         continue
@@ -123,14 +130,27 @@ internal object BodyWeightBackgroundSync {
     val appContext = context.applicationContext
     val client = HealthConnectClient.getOrCreate(appContext)
 
-    val response = client.readRecords(
+    val now = Instant.now()
+    // Try last 90 days first to avoid scanning entire history
+    val recentStart = now.minus(java.time.Duration.ofDays(90))
+    val recentResponse = client.readRecords(
       ReadRecordsRequest(
         recordType = WeightRecord::class,
-        timeRangeFilter = TimeRangeFilter.between(Instant.EPOCH, Instant.now())
+        timeRangeFilter = TimeRangeFilter.between(recentStart, now)
       )
     )
-
-    val record = response.records.maxByOrNull { it.time } ?: return null
+    val record = recentResponse.records.maxByOrNull { it.time }
+      ?: run {
+        // Fallback to last 2 years if no recent records
+        val fallbackStart = now.minus(java.time.Duration.ofDays(730))
+        client.readRecords(
+          ReadRecordsRequest(
+            recordType = WeightRecord::class,
+            timeRangeFilter = TimeRangeFilter.between(fallbackStart, now)
+          )
+        ).records.maxByOrNull { it.time }
+      }
+      ?: return null
     val timeMs = record.time.toEpochMilli()
 
     return mapOf(

@@ -12,3 +12,10 @@ __tests__
 /android/src/test/
 /android/build/
 /example/
+
+# Internal docs and dev-only files — not needed by package consumers
+/CLAUDE.md
+/ROADMAP.md
+/test-bodyweight.js
+/.eslintrc.js
+/tsconfig.json

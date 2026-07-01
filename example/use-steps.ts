@@ -76,8 +76,11 @@ export function useSteps(date: string) {
 
     // Add event listener for step updates
     const subscription = HealthModule.addListener("onStepDataUpdate", (event: StepUpdateEvent) => {
-      // Only update steps if we're looking at today's date
-      const today = new Date().toISOString().split('T')[0];
+      // Only update steps if we're looking at today's date. Use the local
+      // calendar date (not the UTC date from toISOString) so evening updates in
+      // negative-UTC timezones aren't dropped by an off-by-one day mismatch.
+      const now = new Date();
+      const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
       if (date === today) {
         console.log("Received background step update:", event.steps);
         setSteps(event.steps);

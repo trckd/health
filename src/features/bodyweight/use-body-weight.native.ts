@@ -1,28 +1,20 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Platform } from "react-native";
 
 // Import the health module with its type
 import { Health, BodyWeightSample } from "../..";
+import { AuthStatus } from "../../types";
+import { getDayBoundsMs, getTodayInUserTimezone } from "../steps/date-utils";
 
-export enum AuthStatus {
-  Unknown = "UNKNOWN",
-  Authorized = "AUTHORIZED",
-  NotAuthorized = "NOT_AUTHORIZED",
-}
+export { AuthStatus, BodyWeightSample };
 
-export { BodyWeightSample };
-
-// Helper to get day bounds in milliseconds
-function getDayBoundsMs(dateString: string) {
-  const localDate = new Date(dateString + "T00:00:00.000");
-  const startTime = new Date(localDate);
-  startTime.setHours(0, 0, 0, 0);
-  const endTime = new Date(localDate);
-  endTime.setHours(23, 59, 59, 999);
-  return {
-    startTime: startTime.getTime(),
-    endTime: endTime.getTime()
-  };
-}
+// The two native platforms share this implementation and differ only in how
+// the underlying health provider is named in user-facing messages.
+const healthServiceName = Platform.select({
+  ios: "HealthKit",
+  android: "Health Connect",
+  default: "Health Service",
+});
 
 export function useBodyWeight(date?: string) {
   const [bodyWeightSamples, setBodyWeightSamples] = useState<
@@ -41,7 +33,7 @@ export function useBodyWeight(date?: string) {
     async (dateString?: string) => {
       try {
         if (!Health.isHealthDataAvailable) {
-          setError("Health Connect is not available on this device");
+          setError(`${healthServiceName} is not available on this device`);
           return;
         }
 
@@ -62,7 +54,7 @@ export function useBodyWeight(date?: string) {
 
         setError(null);
       } catch (err) {
-        console.error("Health Connect body weight error:", err);
+        console.error(`${healthServiceName} body weight error:`, err);
         setError("Error getting body weight data");
       } finally {
         setLoading(false);
@@ -78,9 +70,11 @@ export function useBodyWeight(date?: string) {
     }
   }, [date, isInitialized, authStatus, fetchBodyWeightSamples]);
 
+  const bodyWeightUpdatesEnabled = useRef(false);
+
   // Set up real-time updates for body weight
   useEffect(() => {
-    let subscription: any = null;
+    let subscription: ReturnType<typeof Health.addListener> | null = null;
 
     if (isInitialized && authStatus === AuthStatus.Authorized) {
       subscription = Health.addListener(
@@ -89,8 +83,11 @@ export function useBodyWeight(date?: string) {
           // Update latest weight
           setLatestWeight(event);
 
-          // If we're viewing today's data, add the new sample to the list
-          const today = new Date().toISOString().split('T')[0];
+          // If we're viewing today's data, add the new sample to the list.
+          // Compare against the user's local date (not the UTC date) so evening
+          // updates in negative-UTC timezones aren't dropped by an off-by-one
+          // day mismatch.
+          const today = getTodayInUserTimezone();
           if (date === today) {
             setBodyWeightSamples((prev) => [...prev, event]);
           }
@@ -98,11 +95,12 @@ export function useBodyWeight(date?: string) {
       );
     }
 
-    // Enable body weight updates
+    // Enable body weight updates once
     const setupBodyWeightUpdates = async () => {
-      if (isInitialized && authStatus === AuthStatus.Authorized) {
+      if (isInitialized && authStatus === AuthStatus.Authorized && !bodyWeightUpdatesEnabled.current) {
         try {
           await Health.enableBodyWeightUpdates("immediate");
+          bodyWeightUpdatesEnabled.current = true;
         } catch (err) {
           // noop - updates might already be enabled
         }
@@ -124,7 +122,7 @@ export function useBodyWeight(date?: string) {
 
   const requestInitialization = async () => {
     if (!Health.isHealthDataAvailable) {
-      setError("Health Connect is not available on this device");
+      setError(`${healthServiceName} is not available on this device`);
       return false;
     }
 
@@ -144,7 +142,7 @@ export function useBodyWeight(date?: string) {
         return false;
       }
     } catch (err) {
-      setError("Cannot access Health Connect");
+      setError(`Cannot access ${healthServiceName}`);
       setIsInitialized(false);
       setAuthStatus(AuthStatus.NotAuthorized);
       console.error(err);
