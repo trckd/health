@@ -265,7 +265,33 @@ Add the following to your `ios/YourApp/Info.plist`:
 
 ## Usage with React Hook
 
-Here's an example React hook that uses the Health module:
+The module ships ready-made `useSteps` and `useBodyWeight` hooks — import them
+directly instead of writing your own:
+
+```typescript
+import { useSteps, useBodyWeight } from '@tracked/health';
+
+function Dashboard() {
+  const { steps, loading, error, isInitialized, requestInitialization } =
+    useSteps('2026-07-01');
+  const { latestWeight } = useBodyWeight();
+
+  if (!isInitialized) {
+    return <Button title="Connect health data" onPress={requestInitialization} />;
+  }
+
+  return <Text>{loading ? 'Loading…' : error ?? `${steps} steps`}</Text>;
+}
+```
+
+Both hooks manage authorization, background updates, and (for `useSteps`) live
+step deliveries for you. `useBodyWeight(date?)` returns
+`{ bodyWeightSamples, latestWeight, loading, error, isInitialized, requestInitialization }`.
+
+### Building your own hook
+
+If you need custom behavior, you can build a hook directly against the `Health`
+module. The built-in `useSteps` is implemented like this:
 
 ```typescript
 import { useCallback, useEffect, useState } from 'react';
