@@ -86,6 +86,13 @@ Gets the step count for a specific time range.
 - `endDate`: End timestamp in milliseconds since epoch
 - Returns: Total step count for the time range
 
+#### `hasStepDataForDate(startDate: number, endDate: number): Promise<boolean>`
+Checks whether any step records exist for the given time range. Useful for deciding whether to show an empty state versus a genuine zero.
+
+- `startDate`: Start timestamp in milliseconds since epoch
+- `endDate`: End timestamp in milliseconds since epoch
+- Returns: `true` if at least one step record exists in the range
+
 #### `getBodyWeightSamples(startDate: number, endDate: number): Promise<BodyWeightSample[]>`
 Returns body weight samples for the provided range (timestamps in milliseconds).
 
@@ -98,6 +105,15 @@ Fetches the most recent weight entry or `null` if none exist.
 
 The current implementation targets read-only access so that it remains compatible with older Health Connect releases.
 
+#### `enableBodyWeightUpdates(frequency: UpdateFrequency): Promise<boolean>`
+Enables background notifications for body weight changes, delivered via the `onBodyWeightDataUpdate` event.
+
+- `frequency`: Update frequency - `"immediate"`, `"hourly"`, `"daily"`, or `"weekly"`
+- Returns: `true` if successfully enabled
+
+#### `disableBodyWeightUpdates(): Promise<boolean>`
+Disables background body weight change notifications.
+
 #### `enableBackgroundDelivery(frequency: UpdateFrequency): Promise<boolean>`
 Enables background delivery of step data updates.
 
@@ -106,6 +122,31 @@ Enables background delivery of step data updates.
 
 #### `disableBackgroundDelivery(): Promise<boolean>`
 Disables background delivery of step data updates.
+
+### Diagnostics & Recovery (Android)
+
+These helpers surface the runtime state of the native integration and open the
+relevant OS settings screens. They are primarily used to build a
+step-tracking diagnostic screen and to guide users through fixing background
+delivery on aggressive OEM battery managers. On iOS the "open settings" helpers
+resolve to `false` / a no-op where not applicable.
+
+#### `getHealthDiagnostics(): Promise<HealthDiagnostics>`
+Returns a best-effort snapshot of the health integration's runtime state (SDK status, granted permissions, background delivery, last WorkManager run, OEM/OS info, battery-optimization state). Never throws — fields are populated best-effort and may be `null` on iOS or when an underlying call fails.
+
+#### `triggerSyncNow(): Promise<boolean>`
+Schedules an immediate WorkManager sync run for the Health Connect change pipeline (e.g. a "Run sync now" button on a diagnostic screen).
+
+- Returns: `true` if the sync was successfully enqueued
+
+#### `openHealthConnectSettings(): Promise<boolean>`
+Opens the system Health Connect settings UI on Android, falling back to the Play Store listing if Health Connect is not installed. On iOS, opens the Health app via Settings.
+
+#### `openBatteryOptimizationSettings(): Promise<OpenSettingsResult>`
+Opens the OS battery-optimization settings for this app, trying multiple intents in order of specificity. iOS resolves to `{ ok: false }` (not applicable).
+
+#### `openOemAppLaunchSettings(): Promise<OpenOemSettingsResult>`
+Opens the OEM-specific auto-launch / background-activity manager (ColorOS, MIUI, EMUI, OnePlus, Vivo), falling back to the app details settings. The `oem` field reports which family was detected.
 
 ### Events
 
@@ -127,6 +168,16 @@ interface StepUpdateEvent {
 }
 ```
 
+#### `onBodyWeightDataUpdate`
+Fired when a new body weight sample is recorded in the background (requires `enableBodyWeightUpdates`).
+
+```typescript
+Health.addListener('onBodyWeightDataUpdate', (event: BodyWeightSample) => {
+  console.log('Weight (kg):', event.value);
+  console.log('Recorded at:', event.isoDate);
+});
+```
+
 ### Types
 
 ```typescript
@@ -140,6 +191,42 @@ interface BodyWeightSample {
   time: number; // epoch milliseconds
   isoDate: string; // ISO 8601 timestamp
   source?: string;
+}
+
+// Alias for the onBodyWeightDataUpdate event payload
+type BodyWeightUpdateEvent = BodyWeightSample;
+
+type UpdateFrequency = 'immediate' | 'hourly' | 'daily' | 'weekly';
+
+interface HealthDiagnostics {
+  sdkStatus: string; // AVAILABLE | UNAVAILABLE | PROVIDER_UPDATE_REQUIRED | EXCEPTION | UNKNOWN
+  providerPackage: string | null;
+  providerVersionCode: number | null;
+  providerVersionName: string | null;
+  permissionsGranted: boolean | null; // null on iOS
+  grantedPermissions: string[];
+  backgroundDeliveryEnabled: boolean;
+  lastWorkerRunMs: number | null;
+  lastWorkerResult: string | null;
+  lastWorkerError: string | null;
+  lastChangesTokenIssuedMs: number | null;
+  workManagerState: string | null; // ENQUEUED | RUNNING | SUCCEEDED | FAILED | CANCELLED | BLOCKED
+  oemBrand: string | null;
+  oemManufacturer: string | null;
+  oemModel: string | null;
+  oemDevice: string | null;
+  osSdkInt: number | null;
+  osRelease: string | null;
+  ignoringBatteryOptimizations: boolean;
+}
+
+interface OpenSettingsResult {
+  ok: boolean;
+  intentUsed: string | null;
+}
+
+interface OpenOemSettingsResult extends OpenSettingsResult {
+  oem: string;
 }
 ```
 
