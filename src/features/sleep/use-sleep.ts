@@ -66,8 +66,12 @@ export function useSleep(date: string) {
   // Set up background delivery and event listeners
   useEffect(() => {
     const subscription = Health.addListener("onSleepDataUpdate", (event: SleepSession) => {
-      // Check if this sleep session is for the current date being viewed
-      const sessionDate = new Date(event.startTime).toISOString().split("T")[0];
+      // Check if this sleep session is for the current date being viewed.
+      // Bucket by the session's LOCAL calendar date to match the local-midnight
+      // bounds getDateRange uses — not the UTC date from toISOString(), which
+      // would drop evening sessions in negative-offset zones as "tomorrow".
+      const start = new Date(event.startTime);
+      const sessionDate = `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, "0")}-${String(start.getDate()).padStart(2, "0")}`;
       if (date === sessionDate) {
         // Update or add the sleep session
         setSleepSessions((prevSessions) => {

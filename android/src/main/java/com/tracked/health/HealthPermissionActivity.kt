@@ -10,6 +10,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.PermissionController
 import androidx.health.connect.client.permission.HealthPermission
+import androidx.health.connect.client.records.SleepSessionRecord
 import androidx.health.connect.client.records.StepsRecord
 import androidx.health.connect.client.records.WeightRecord
 
@@ -68,7 +69,8 @@ class HealthPermissionActivity : ComponentActivity() {
     private fun getRequiredPermissions(): Set<String> {
         return setOf(
             HealthPermission.getReadPermission(StepsRecord::class),
-            HealthPermission.getReadPermission(WeightRecord::class)
+            HealthPermission.getReadPermission(WeightRecord::class),
+            HealthPermission.getReadPermission(SleepSessionRecord::class)
         )
     }
 }

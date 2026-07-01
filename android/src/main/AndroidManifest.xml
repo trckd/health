@@ -4,7 +4,8 @@
     <!-- Health Connect permissions -->
     <uses-permission android:name="android.permission.health.READ_STEPS" />
     <uses-permission android:name="android.permission.health.READ_WEIGHT" />
-    
+    <uses-permission android:name="android.permission.health.READ_SLEEP" />
+
     <!-- Health Connect intent filters -->
     <queries>
         <package android:name="com.google.android.apps.healthdata" />
