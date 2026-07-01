@@ -1,0 +1,18 @@
+version: 2
+updates:
+  # npm dependencies (grouped so related updates land in a single PR)
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      dev-dependencies:
+        dependency-type: development
+
+  # Keep the GitHub Actions used by the CI workflow up to date
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
