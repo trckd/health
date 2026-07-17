@@ -3,8 +3,6 @@ package com.tracked.health
 import android.content.Context
 import android.util.Log
 import androidx.health.connect.client.HealthConnectClient
-import androidx.health.connect.client.permission.HealthPermission
-import androidx.health.connect.client.records.StepsRecord
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import java.time.LocalDate
@@ -18,11 +16,7 @@ class StepChangeSyncWorker(
   override suspend fun doWork(): Result {
     return try {
       val client = HealthConnectClient.getOrCreate(applicationContext)
-      val requiredPermissions = setOf(
-        HealthPermission.getReadPermission(StepsRecord::class)
-      )
-      val granted = client.permissionController.getGrantedPermissions()
-      if (!granted.containsAll(requiredPermissions)) {
+      if (!HealthBackgroundSync.hasRequiredPermissions(client)) {
         Log.w(TAG, "Permissions missing; clearing background sync state")
         HealthBackgroundSync.disable(applicationContext)
         HealthBackgroundSync.recordWorkerRun(

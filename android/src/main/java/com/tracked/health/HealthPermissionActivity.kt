@@ -22,6 +22,7 @@ class HealthPermissionActivity : ComponentActivity() {
     companion object {
         private const val TAG = "HealthPermissionActivity"
         const val EXTRA_PERMISSIONS_GRANTED = "permissions_granted"
+        const val EXTRA_SUCCESS_PERMISSIONS = "success_permissions"
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -29,13 +30,20 @@ class HealthPermissionActivity : ComponentActivity() {
 
         val requiredPermissions = intent.getStringArrayListExtra("required_permissions")?.toSet()
             ?: getRequiredPermissions()
+        // Optional capabilities such as background reads should be shown in
+        // the same Health Connect sheet, but declining an optional capability
+        // must not make foreground step access look denied to JavaScript.
+        val successPermissions = intent
+            .getStringArrayListExtra(EXTRA_SUCCESS_PERMISSIONS)
+            ?.toSet()
+            ?: requiredPermissions
 
         requestPermissionActivityContract = registerForActivityResult(
             PermissionController.createRequestPermissionResultContract()
         ) { grantedPermissions ->
             Log.d(TAG, "Permission result received: $grantedPermissions")
 
-            val hasAllPermissions = grantedPermissions.containsAll(requiredPermissions)
+            val hasAllPermissions = grantedPermissions.containsAll(successPermissions)
             Log.d(TAG, "All permissions granted: $hasAllPermissions")
 
             val moduleInstance = HealthModule.getInstance()

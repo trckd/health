@@ -41,6 +41,15 @@ public class HealthModule: Module {
     OnCreate {
       self.bodyWeightAnchor = self.loadBodyWeightAnchor()
       self.sleepAnchor = self.loadSleepAnchor()
+      // Background delivery is persisted by HealthKit, but observer queries
+      // are process-local and must be recreated on every launch before
+      // HealthKit delivers pending updates.
+      if
+        HKHealthStore.isHealthDataAvailable(),
+        let stepCountType = HKQuantityType.quantityType(forIdentifier: .stepCount)
+      {
+        self.startStepCountObservation(stepCountType: stepCountType)
+      }
     }
 
     OnDestroy {
@@ -268,42 +277,8 @@ public class HealthModule: Module {
           return
         }
 
-        if success && !self.observerStarted {
-          let query = HKObserverQuery(sampleType: stepCountType, predicate: nil) { _, completionHandler, error in
-            if let error {
-              print("Observer query error: \(error.localizedDescription)")
-              completionHandler()
-              return
-            }
-
-            let now = Date()
-            let (startOfDay, endOfDay) = self.dayBounds(for: now)
-            let predicate = HKQuery.predicateForSamples(withStart: startOfDay, end: endOfDay, options: .strictStartDate)
-
-            let statsQuery = HKStatisticsQuery(
-              quantityType: stepCountType,
-              quantitySamplePredicate: predicate,
-              options: .cumulativeSum
-            ) { _, result, _ in
-              let steps = result?.sumQuantity()?.doubleValue(for: HKUnit.count()) ?? 0
-              let payload: [String: Any] = [
-                "steps": steps,
-                "date": self.dayFormatter.string(from: now)
-              ]
-
-              DispatchQueue.main.async {
-                self.sendEvent("onStepDataUpdate", payload)
-              }
-
-              completionHandler()
-            }
-
-            self.healthStore.execute(statsQuery)
-          }
-
-          self.healthStore.execute(query)
-          self.stepCountObserver = query
-          self.observerStarted = true
+        if success {
+          self.startStepCountObservation(stepCountType: stepCountType)
         }
 
         promise.resolve(success)
@@ -597,6 +572,66 @@ public class HealthModule: Module {
     let start = calendar.startOfDay(for: date)
     let end = calendar.date(byAdding: DateComponents(day: 1), to: start) ?? start
     return (start, end)
+  }
+
+  private func startStepCountObservation(stepCountType: HKQuantityType) {
+    guard !observerStarted else { return }
+
+    let query = HKObserverQuery(sampleType: stepCountType, predicate: nil) { [weak self] _, completionHandler, error in
+      guard let self else {
+        completionHandler()
+        return
+      }
+
+      if let error {
+        print("Observer query error: \(error.localizedDescription)")
+        completionHandler()
+        return
+      }
+
+      let now = Date()
+      let (startOfDay, endOfDay) = self.dayBounds(for: now)
+      let predicate = HKQuery.predicateForSamples(
+        withStart: startOfDay,
+        end: endOfDay,
+        options: .strictStartDate
+      )
+
+      let statsQuery = HKStatisticsQuery(
+        quantityType: stepCountType,
+        quantitySamplePredicate: predicate,
+        options: .cumulativeSum
+      ) { [weak self] _, result, error in
+        guard let self else {
+          completionHandler()
+          return
+        }
+        if let error {
+          // Never turn a transient HealthKit query failure (for example while
+          // protected data is locked) into a false zero-step update.
+          print("Step statistics query error: \(error.localizedDescription)")
+          completionHandler()
+          return
+        }
+
+        let steps = result?.sumQuantity()?.doubleValue(for: HKUnit.count()) ?? 0
+        let payload: [String: Any] = [
+          "steps": steps,
+          "date": self.dayFormatter.string(from: now)
+        ]
+
+        DispatchQueue.main.async {
+          self.sendEvent("onStepDataUpdate", payload)
+        }
+        completionHandler()
+      }
+
+      self.healthStore.execute(statsQuery)
+    }
+
+    healthStore.execute(query)
+    stepCountObserver = query
+    observerStarted = true
   }
 
   private func startBodyWeightObservation(bodyMassType: HKQuantityType) {

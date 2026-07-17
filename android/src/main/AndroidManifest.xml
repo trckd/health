@@ -5,6 +5,9 @@
     <uses-permission android:name="android.permission.health.READ_STEPS" />
     <uses-permission android:name="android.permission.health.READ_WEIGHT" />
     <uses-permission android:name="android.permission.health.READ_SLEEP" />
+    <!-- Required before Health Connect can be queried from WorkManager. The
+         permission is feature-gated and requested at runtime by HealthModule. -->
+    <uses-permission android:name="android.permission.health.READ_HEALTH_DATA_IN_BACKGROUND" />
 
     <!-- Health Connect intent filters -->
     <queries>

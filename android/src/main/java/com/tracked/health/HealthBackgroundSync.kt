@@ -3,6 +3,7 @@ package com.tracked.health
 import android.content.Context
 import android.util.Log
 import androidx.health.connect.client.HealthConnectClient
+import androidx.health.connect.client.HealthConnectFeatures
 import androidx.health.connect.client.permission.HealthPermission
 import androidx.health.connect.client.records.StepsRecord
 import androidx.health.connect.client.request.AggregateRequest
@@ -25,6 +26,7 @@ internal object HealthBackgroundSync {
   private const val KEY_LAST_ERROR = "last_worker_error"
   private const val KEY_LAST_TOKEN_ISSUED_MS = "last_token_issued_ms"
   internal const val WORK_NAME = "HealthStepChangeSync"
+  private const val IMMEDIATE_WORK_NAME = "HealthStepChangeSyncImmediate"
 
   internal fun recordWorkerRun(context: Context, result: String, error: String? = null) {
     val edit = preferences(context.applicationContext).edit()
@@ -48,6 +50,31 @@ internal object HealthBackgroundSync {
     )
   }
 
+  fun isEnabled(context: Context): Boolean =
+    preferences(context.applicationContext).getString(KEY_STEPS_TOKEN, null) != null
+
+  private fun supportsBackgroundReads(client: HealthConnectClient): Boolean {
+    return try {
+      client.features.getFeatureStatus(
+        HealthConnectFeatures.FEATURE_READ_HEALTH_DATA_IN_BACKGROUND
+      ) == HealthConnectFeatures.FEATURE_STATUS_AVAILABLE
+    } catch (e: Exception) {
+      Log.w(TAG, "Failed to check background-read feature status", e)
+      false
+    }
+  }
+
+  suspend fun hasRequiredPermissions(client: HealthConnectClient): Boolean {
+    val granted = client.permissionController.getGrantedPermissions()
+    val required = mutableSetOf(
+      HealthPermission.getReadPermission(StepsRecord::class)
+    )
+    if (supportsBackgroundReads(client)) {
+      required += HealthPermission.PERMISSION_READ_HEALTH_DATA_IN_BACKGROUND
+    }
+    return granted.containsAll(required)
+  }
+
   private fun stampToken(context: Context, token: String) {
     preferences(context.applicationContext).edit()
       .putString(KEY_STEPS_TOKEN, token)
@@ -59,12 +86,8 @@ internal object HealthBackgroundSync {
     val appContext = context.applicationContext
     val client = HealthConnectClient.getOrCreate(appContext)
 
-    val requiredPermissions = setOf(
-      HealthPermission.getReadPermission(StepsRecord::class)
-    )
-    val granted = client.permissionController.getGrantedPermissions()
-    if (!granted.containsAll(requiredPermissions)) {
-      Log.w(TAG, "Cannot enable background delivery without Health Connect permissions")
+    if (!hasRequiredPermissions(client)) {
+      Log.w(TAG, "Cannot enable background delivery without foreground and background Health Connect permissions")
       return false
     }
 
@@ -87,6 +110,7 @@ internal object HealthBackgroundSync {
       .remove(KEY_FREQUENCY)
       .apply()
     WorkManager.getInstance(appContext).cancelUniqueWork(WORK_NAME)
+    WorkManager.getInstance(appContext).cancelUniqueWork(IMMEDIATE_WORK_NAME)
     return true
   }
 
@@ -106,8 +130,8 @@ internal object HealthBackgroundSync {
     val workRequest = requestBuilder.build()
 
     WorkManager.getInstance(appContext).enqueueUniqueWork(
-      WORK_NAME,
-      ExistingWorkPolicy.APPEND_OR_REPLACE,
+      if (immediate) IMMEDIATE_WORK_NAME else WORK_NAME,
+      if (immediate) ExistingWorkPolicy.KEEP else ExistingWorkPolicy.APPEND_OR_REPLACE,
       workRequest
     )
   }
@@ -136,6 +160,10 @@ internal object HealthBackgroundSync {
       val response = client.getChanges(nextToken)
 
       if (response.changesTokenExpired) {
+        // A fresh token starts at "now" and cannot replay the expired window.
+        // Force a current aggregate refresh so the UI still catches up instead
+        // of silently waiting for some future record to change.
+        hasChanges = true
         tokenRetries++
         if (tokenRetries > maxTokenRetries) {
           Log.e(TAG, "Changes token expired $maxTokenRetries times; aborting")
