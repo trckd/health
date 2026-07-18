@@ -10,6 +10,7 @@ import android.os.PowerManager
 import android.provider.Settings
 import android.util.Log
 import androidx.health.connect.client.HealthConnectClient
+import androidx.health.connect.client.HealthConnectFeatures
 import androidx.health.connect.client.permission.HealthPermission
 import androidx.health.connect.client.records.SleepSessionRecord
 import androidx.health.connect.client.records.StepsRecord
@@ -88,11 +89,16 @@ class HealthModule : Module() {
     AsyncFunction("requestAuthorization") { promise: Promise ->
       moduleScope.launch {
         try {
-          val permissions = setOf(
+          val foregroundPermissions = setOf(
             HealthPermission.getReadPermission(StepsRecord::class),
             HealthPermission.getReadPermission(WeightRecord::class),
             HealthPermission.getReadPermission(SleepSessionRecord::class)
           )
+          val permissions = if (supportsBackgroundReads()) {
+            foregroundPermissions + HealthPermission.PERMISSION_READ_HEALTH_DATA_IN_BACKGROUND
+          } else {
+            foregroundPermissions
+          }
 
           val granted = withContext(ioDispatcher) {
             healthConnectClient.permissionController.getGrantedPermissions()
@@ -103,7 +109,7 @@ class HealthModule : Module() {
             promise.resolve(true)
           } else {
             Log.i(TAG, "Requesting Health Connect permissions")
-            launchPermissionActivity(permissions, promise)
+            launchPermissionActivity(permissions, foregroundPermissions, promise)
           }
         } catch (e: Exception) {
           Log.e(TAG, "Error requesting authorization", e)
@@ -536,6 +542,10 @@ class HealthModule : Module() {
     AsyncFunction("triggerSyncNow") { promise: Promise ->
       moduleScope.launch {
         try {
+          if (!HealthBackgroundSync.isEnabled(context.applicationContext)) {
+            promise.resolve(false)
+            return@launch
+          }
           withContext(ioDispatcher) {
             HealthBackgroundSync.scheduleSync(context.applicationContext, immediate = true)
           }
@@ -552,6 +562,17 @@ class HealthModule : Module() {
     return when (sdkStatusString()) {
       "AVAILABLE" -> true
       else -> false
+    }
+  }
+
+  private fun supportsBackgroundReads(): Boolean {
+    return try {
+      healthConnectClient.features.getFeatureStatus(
+        HealthConnectFeatures.FEATURE_READ_HEALTH_DATA_IN_BACKGROUND
+      ) == HealthConnectFeatures.FEATURE_STATUS_AVAILABLE
+    } catch (e: Exception) {
+      Log.w(TAG, "Failed to check Health Connect background-read support", e)
+      false
     }
   }
 
@@ -701,7 +722,11 @@ class HealthModule : Module() {
     }
   }
 
-  private fun launchPermissionActivity(permissions: Set<String>, promise: Promise) {
+  private fun launchPermissionActivity(
+    permissions: Set<String>,
+    successPermissions: Set<String>,
+    promise: Promise
+  ) {
     try {
       // Reject if a permission request is already in flight
       pendingPermissionPromise?.let { existing ->
@@ -712,6 +737,10 @@ class HealthModule : Module() {
       val intent = Intent(context, HealthPermissionActivity::class.java).apply {
         addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         putStringArrayListExtra("required_permissions", ArrayList(permissions))
+        putStringArrayListExtra(
+          HealthPermissionActivity.EXTRA_SUCCESS_PERMISSIONS,
+          ArrayList(successPermissions)
+        )
       }
 
       val currentActivity = appContext.currentActivity
