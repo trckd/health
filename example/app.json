@@ -20,8 +20,8 @@
         "com.apple.developer.healthkit.background-delivery": true
       },
       "infoPlist": {
-        "NSHealthShareUsageDescription": "We need access to your health data to track your steps",
-        "NSHealthUpdateUsageDescription": "We need access to your health data to track your steps",
+        "NSHealthShareUsageDescription": "We read the health categories you choose, including menstrual-cycle data, to keep your private health history in sync.",
+        "NSHealthUpdateUsageDescription": "We do not write menstrual-cycle data; existing step and weight integrations may use HealthKit as described in the app.",
         "UIBackgroundModes": ["processing"]
       }
     },

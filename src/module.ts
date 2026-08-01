@@ -18,6 +18,90 @@ export interface BodyWeightSample {
 
 export type BodyWeightUpdateEvent = BodyWeightSample;
 
+/** A separately requestable, read-only health data capability. */
+export type HealthCapability =
+  | "steps"
+  | "bodyweight"
+  | "sleep"
+  | "menstrualCycle";
+
+/**
+ * Result of a capability-scoped permission request.
+ *
+ * HealthKit deliberately does not expose read authorization state, so iOS
+ * returns successfully requested capabilities in `unknown`. Android can
+ * report them in `granted` or `denied`.
+ */
+export interface AuthorizationResult {
+  /** Whether every requested capability is usable, or the iOS request completed. */
+  success: boolean;
+  requested: HealthCapability[];
+  granted: HealthCapability[];
+  denied: HealthCapability[];
+  unknown: HealthCapability[];
+}
+
+export type HistoricalAccessStatus =
+  | "granted"
+  | "denied"
+  | "not_required"
+  | "unavailable";
+
+/** Result of the separate, explicit historical-health-data permission flow. */
+export interface HistoricalAccessResult {
+  success: boolean;
+  platform: "ios" | "android";
+  status: HistoricalAccessStatus;
+}
+
+export type MenstrualCycleRecordKind = "period" | "flow";
+
+export type MenstrualFlow =
+  | "none"
+  | "unknown"
+  | "spotting"
+  | "light"
+  | "medium"
+  | "heavy";
+
+export interface HealthRecordSource {
+  /** Native health data provider that returned this record. */
+  platform: "healthkit" | "health_connect";
+  /** Stable identifier assigned to the native record. */
+  recordId: string;
+  /** Bundle identifier (iOS) or package name (Android) of the writer. */
+  bundleIdentifier: string;
+  /** Human-readable source name when the platform exposes one. */
+  name: string | null;
+  /** Version of the app or device that wrote the record, when available. */
+  version: string | null;
+  /** Source-assigned identifier used for cross-device updates, when available. */
+  clientRecordId: string | null;
+  /** Epoch timestamp in milliseconds, when the platform exposes one. */
+  lastModifiedTime: number | null;
+}
+
+/** A normalized, read-only menstrual period or flow record. */
+export interface MenstrualCycleRecord {
+  /** Stable native record identifier, equivalent to `source.recordId`. */
+  id: string;
+  /** Period boundaries or an individual flow observation. */
+  kind: MenstrualCycleRecordKind;
+  startTime: number;
+  endTime: number;
+  isoStartDate: string;
+  isoEndDate: string;
+  /** User-experienced offset at the record boundaries, or null if absent. */
+  startZoneOffsetMinutes: number | null;
+  endZoneOffsetMinutes: number | null;
+  /** IANA time-zone identifier when supplied by HealthKit. */
+  zoneId: string | null;
+  flow: MenstrualFlow | null;
+  /** HealthKit's menstrual-cycle-start marker; true for Android period records. */
+  isCycleStart: boolean | null;
+  source: HealthRecordSource;
+}
+
 export type SleepStageType =
   | "InBed"
   | "Awake"
@@ -119,6 +203,16 @@ export interface HealthModuleInterface {
   checkHealthDataAvailable(): boolean;
   requestAuthorization(): Promise<boolean>;
   /**
+   * Request only the supplied read capabilities. This never enables menstrual
+   * background observers or write access.
+   */
+  requestAccess(capabilities: HealthCapability[]): Promise<AuthorizationResult>;
+  /**
+   * Request extended historical read access independently from data-category
+   * consent. iOS does not require an additional permission.
+   */
+  requestHistoricalAccess(): Promise<HistoricalAccessResult>;
+  /**
    * Get the step count for a specific day
    * @param startDate - The start date in milliseconds since epoch
    * @param endDate - The end date in milliseconds since epoch
@@ -149,11 +243,21 @@ export interface HealthModuleInterface {
   /**
    * Fetch weight samples between two timestamps (inclusive) in chronological order.
    */
-  getBodyWeightSamples(startDate: number, endDate: number): Promise<BodyWeightSample[]>;
+  getBodyWeightSamples(
+    startDate: number,
+    endDate: number
+  ): Promise<BodyWeightSample[]>;
   /**
    * Retrieve the most recent recorded body weight or null if none exist.
    */
   getLatestBodyWeight(): Promise<BodyWeightSample | null>;
+  /**
+   * Fetch normalized period and flow records in chronological order.
+   */
+  getMenstrualCycleRecords(
+    startDate: number,
+    endDate: number
+  ): Promise<MenstrualCycleRecord[]>;
   /**
    * Get sleep sessions for a specific date range
    * @param startDate - The start date in milliseconds since epoch
@@ -204,14 +308,23 @@ declare class HealthModule
   isHealthDataAvailable: boolean;
   checkHealthDataAvailable(): boolean;
   requestAuthorization(): Promise<boolean>;
+  requestAccess(capabilities: HealthCapability[]): Promise<AuthorizationResult>;
+  requestHistoricalAccess(): Promise<HistoricalAccessResult>;
   getStepCount(startDate: number, endDate: number): Promise<number>;
   hasStepDataForDate(startDate: number, endDate: number): Promise<boolean>;
   enableBackgroundDelivery(frequency: UpdateFrequency): Promise<boolean>;
   disableBackgroundDelivery(): Promise<boolean>;
   enableBodyWeightUpdates(frequency: UpdateFrequency): Promise<boolean>;
   disableBodyWeightUpdates(): Promise<boolean>;
-  getBodyWeightSamples(startDate: number, endDate: number): Promise<BodyWeightSample[]>;
+  getBodyWeightSamples(
+    startDate: number,
+    endDate: number
+  ): Promise<BodyWeightSample[]>;
   getLatestBodyWeight(): Promise<BodyWeightSample | null>;
+  getMenstrualCycleRecords(
+    startDate: number,
+    endDate: number
+  ): Promise<MenstrualCycleRecord[]>;
   getSleepSessions(startDate: number, endDate: number): Promise<SleepSession[]>;
   enableSleepUpdates(frequency: UpdateFrequency): Promise<boolean>;
   disableSleepUpdates(): Promise<boolean>;

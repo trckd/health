@@ -45,9 +45,9 @@
       <true/>
     </dict>
     <key>NSHealthShareUsageDescription</key>
-    <string>We need access to your health data to track your steps and body weight</string>
+    <string>We read the health categories you choose, including menstrual-cycle data, to keep your private health history in sync.</string>
     <key>NSHealthUpdateUsageDescription</key>
-    <string>We need access to your health data to track your steps and body weight</string>
+    <string>We do not write menstrual-cycle data; existing step and weight integrations may use HealthKit as described in the app.</string>
     <key>UIBackgroundModes</key>
     <array>
       <string>health-kit</string>

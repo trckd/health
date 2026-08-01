@@ -12,6 +12,9 @@ import android.util.Log
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.HealthConnectFeatures
 import androidx.health.connect.client.permission.HealthPermission
+import androidx.health.connect.client.records.MenstruationFlowRecord
+import androidx.health.connect.client.records.MenstruationPeriodRecord
+import androidx.health.connect.client.records.Record
 import androidx.health.connect.client.records.SleepSessionRecord
 import androidx.health.connect.client.records.StepsRecord
 import androidx.health.connect.client.records.WeightRecord
@@ -33,6 +36,7 @@ import kotlinx.coroutines.withContext
 import java.lang.ref.WeakReference
 import java.time.Instant
 import java.util.ArrayList
+import kotlin.reflect.KClass
 
 class HealthModule : Module() {
   private val context: Context
@@ -45,6 +49,12 @@ class HealthModule : Module() {
   companion object {
     private const val TAG = "HealthModule"
     private const val HEALTH_CONNECT_PACKAGE = "com.google.android.apps.healthdata"
+    private val SUPPORTED_CAPABILITIES = setOf(
+      "steps",
+      "bodyweight",
+      "sleep",
+      "menstrualCycle"
+    )
 
     @Volatile
     private var moduleInstance: WeakReference<HealthModule>? = null
@@ -61,6 +71,8 @@ class HealthModule : Module() {
   }
 
   private var pendingPermissionPromise: Promise? = null
+  private var pendingPermissionCapabilities: List<String>? = null
+  private var pendingHistoricalAccess = false
 
   override fun definition() = ModuleDefinition {
     Name("Health")
@@ -79,6 +91,8 @@ class HealthModule : Module() {
       // Clean up any pending promises to prevent memory leaks
       pendingPermissionPromise?.reject("module_destroyed", "Health module was destroyed", null)
       pendingPermissionPromise = null
+      pendingPermissionCapabilities = null
+      pendingHistoricalAccess = false
       clearInstance()
     }
 
@@ -109,11 +123,95 @@ class HealthModule : Module() {
             promise.resolve(true)
           } else {
             Log.i(TAG, "Requesting Health Connect permissions")
-            launchPermissionActivity(permissions, foregroundPermissions, promise)
+            launchPermissionActivity(permissions, foregroundPermissions, promise, null, false)
           }
         } catch (e: Exception) {
           Log.e(TAG, "Error requesting authorization", e)
           promise.reject("authorization_error", e.message, e)
+        }
+      }
+    }
+
+    AsyncFunction("requestAccess") { capabilities: List<String>, promise: Promise ->
+      moduleScope.launch {
+        try {
+          if (!isHealthConnectAvailable()) {
+            promise.reject(
+              "HC_PROVIDER_UNAVAILABLE",
+              "Health Connect provider is not available on this device",
+              null
+            )
+            return@launch
+          }
+
+          val invalid = capabilities.filterNot { it in SUPPORTED_CAPABILITIES }.distinct()
+          if (invalid.isNotEmpty()) {
+            promise.reject(
+              "invalid_capability",
+              "Unsupported health capabilities: ${invalid.joinToString(", ")}",
+              null
+            )
+            return@launch
+          }
+
+          val requested = capabilities.distinct()
+          if (requested.isEmpty()) {
+            promise.resolve(makeAuthorizationResult(requested, emptySet()))
+            return@launch
+          }
+
+          // Capability-scoped requests are foreground/read-only. In
+          // particular, menstrual-cycle access never opts into background
+          // workers or write permissions.
+          val permissions = requested.flatMapTo(mutableSetOf()) {
+            permissionsForCapability(it)
+          }
+          val granted = withContext(ioDispatcher) {
+            healthConnectClient.permissionController.getGrantedPermissions()
+          }
+
+          if (granted.containsAll(permissions)) {
+            promise.resolve(makeAuthorizationResult(requested, granted))
+          } else {
+            launchPermissionActivity(permissions, permissions, promise, requested, false)
+          }
+        } catch (e: Exception) {
+          Log.e(TAG, "Error requesting capability-scoped authorization", e)
+          promise.reject("authorization_error", e.message, e)
+        }
+      }
+    }
+
+    AsyncFunction("requestHistoricalAccess") { promise: Promise ->
+      moduleScope.launch {
+        try {
+          if (!isHealthConnectAvailable()) {
+            promise.resolve(makeHistoricalAccessResult("unavailable"))
+            return@launch
+          }
+          if (!supportsHistoricalReads()) {
+            promise.resolve(makeHistoricalAccessResult("unavailable"))
+            return@launch
+          }
+
+          val permission = HealthPermission.PERMISSION_READ_HEALTH_DATA_HISTORY
+          val granted = withContext(ioDispatcher) {
+            healthConnectClient.permissionController.getGrantedPermissions()
+          }
+          if (permission in granted) {
+            promise.resolve(makeHistoricalAccessResult("granted"))
+          } else {
+            launchPermissionActivity(
+              setOf(permission),
+              setOf(permission),
+              promise,
+              null,
+              true
+            )
+          }
+        } catch (e: Exception) {
+          Log.e(TAG, "Error requesting historical health access", e)
+          promise.reject("historical_authorization_error", e.message, e)
         }
       }
     }
@@ -253,6 +351,51 @@ class HealthModule : Module() {
         } catch (e: Exception) {
           Log.e(TAG, "Error reading latest body weight", e)
           promise.reject("body_weight_read_error", e.message, e)
+        }
+      }
+    }
+
+    AsyncFunction("getMenstrualCycleRecords") { startDate: Long, endDate: Long, promise: Promise ->
+      moduleScope.launch {
+        try {
+          if (!isHealthConnectAvailable()) {
+            promise.reject(
+              "HC_PROVIDER_UNAVAILABLE",
+              "Health Connect provider is not available on this device",
+              null
+            )
+            return@launch
+          }
+          if (startDate >= endDate) {
+            promise.reject(
+              "invalid_date_range",
+              "startDate must be before endDate",
+              null
+            )
+            return@launch
+          }
+
+          val startInstant = Instant.ofEpochMilli(startDate)
+          val endInstant = Instant.ofEpochMilli(endDate)
+          val filter = TimeRangeFilter.between(startInstant, endInstant)
+          val records = withContext(ioDispatcher) {
+            val periods = readAllRecords(MenstruationPeriodRecord::class, filter)
+              .map(::mapMenstruationPeriodRecord)
+            val flows = readAllRecords(MenstruationFlowRecord::class, filter)
+              .map(::mapMenstruationFlowRecord)
+
+            (periods + flows).sortedBy { it["startTime"] as Long }
+          }
+
+          promise.resolve(records)
+        } catch (e: Exception) {
+          Log.e(TAG, "Error reading menstrual cycle records", e)
+          val code = if (e is SecurityException) {
+            "HC_PERMISSION_DENIED"
+          } else {
+            "menstrual_cycle_read_error"
+          }
+          promise.reject(code, e.message, e)
         }
       }
     }
@@ -576,6 +719,17 @@ class HealthModule : Module() {
     }
   }
 
+  private fun supportsHistoricalReads(): Boolean {
+    return try {
+      healthConnectClient.features.getFeatureStatus(
+        HealthConnectFeatures.FEATURE_READ_HEALTH_DATA_HISTORY
+      ) == HealthConnectFeatures.FEATURE_STATUS_AVAILABLE
+    } catch (e: Exception) {
+      Log.w(TAG, "Failed to check Health Connect historical-read support", e)
+      false
+    }
+  }
+
   private fun sdkStatusString(): String {
     return try {
       when (HealthConnectClient.getSdkStatus(context, HEALTH_CONNECT_PACKAGE)) {
@@ -725,13 +879,15 @@ class HealthModule : Module() {
   private fun launchPermissionActivity(
     permissions: Set<String>,
     successPermissions: Set<String>,
-    promise: Promise
+    promise: Promise,
+    scopedCapabilities: List<String>?,
+    historicalAccess: Boolean
   ) {
     try {
-      // Reject if a permission request is already in flight
-      pendingPermissionPromise?.let { existing ->
-        existing.reject("authorization_error", "A permission request is already in progress", null)
-        pendingPermissionPromise = null
+      // Do not let an older permission activity resolve a newer promise.
+      if (pendingPermissionPromise != null) {
+        promise.reject("authorization_error", "A permission request is already in progress", null)
+        return
       }
 
       val intent = Intent(context, HealthPermissionActivity::class.java).apply {
@@ -743,13 +899,137 @@ class HealthModule : Module() {
         )
       }
 
+      pendingPermissionPromise = promise
+      pendingPermissionCapabilities = scopedCapabilities
+      pendingHistoricalAccess = historicalAccess
       val currentActivity = appContext.currentActivity
       currentActivity?.startActivity(intent) ?: context.startActivity(intent)
-      pendingPermissionPromise = promise
     } catch (e: Exception) {
       Log.e(TAG, "Error requesting Health Connect permissions", e)
-      promise.resolve(false)
+      pendingPermissionPromise = null
+      pendingPermissionCapabilities = null
+      pendingHistoricalAccess = false
+      if (historicalAccess) {
+        promise.resolve(makeHistoricalAccessResult("denied"))
+      } else if (scopedCapabilities == null) {
+        promise.resolve(false)
+      } else {
+        promise.resolve(makeAuthorizationResult(scopedCapabilities, emptySet()))
+      }
     }
+  }
+
+  private fun permissionsForCapability(capability: String): Set<String> {
+    return when (capability) {
+      "steps" -> setOf(HealthPermission.getReadPermission(StepsRecord::class))
+      "bodyweight" -> setOf(HealthPermission.getReadPermission(WeightRecord::class))
+      "sleep" -> setOf(HealthPermission.getReadPermission(SleepSessionRecord::class))
+      "menstrualCycle" -> setOf(
+        HealthPermission.getReadPermission(MenstruationPeriodRecord::class),
+        HealthPermission.getReadPermission(MenstruationFlowRecord::class)
+      )
+      else -> emptySet()
+    }
+  }
+
+  private fun makeAuthorizationResult(
+    requested: List<String>,
+    grantedPermissions: Set<String>
+  ): Map<String, Any> {
+    val (granted, denied) = requested.partition { capability ->
+      grantedPermissions.containsAll(permissionsForCapability(capability))
+    }
+    return mapOf(
+      "success" to denied.isEmpty(),
+      "requested" to requested,
+      "granted" to granted,
+      "denied" to denied,
+      "unknown" to emptyList<String>()
+    )
+  }
+
+  private fun makeHistoricalAccessResult(status: String): Map<String, Any> {
+    return mapOf(
+      "success" to (status == "granted"),
+      "platform" to "android",
+      "status" to status
+    )
+  }
+
+  private suspend fun <T : Record> readAllRecords(
+    recordType: KClass<T>,
+    timeRangeFilter: TimeRangeFilter
+  ): List<T> {
+    val records = mutableListOf<T>()
+    var pageToken: String? = null
+    do {
+      val response = healthConnectClient.readRecords(
+        ReadRecordsRequest(
+          recordType = recordType,
+          timeRangeFilter = timeRangeFilter,
+          pageSize = 1000,
+          pageToken = pageToken
+        )
+      )
+      records += response.records
+      pageToken = response.pageToken
+    } while (pageToken != null)
+    return records
+  }
+
+  private fun menstrualSource(metadata: androidx.health.connect.client.records.metadata.Metadata): Map<String, Any?> {
+    return mapOf(
+      "platform" to "health_connect",
+      "recordId" to metadata.id,
+      "bundleIdentifier" to metadata.dataOrigin.packageName,
+      "name" to null,
+      "version" to null,
+      "clientRecordId" to metadata.clientRecordId?.takeIf { it.isNotBlank() },
+      "lastModifiedTime" to metadata.lastModifiedTime.toEpochMilli()
+    )
+  }
+
+  private fun mapMenstruationPeriodRecord(record: MenstruationPeriodRecord): Map<String, Any?> {
+    val startTime = record.startTime.toEpochMilli()
+    val endTime = record.endTime.toEpochMilli()
+    return mapOf(
+      "id" to record.metadata.id,
+      "kind" to "period",
+      "startTime" to startTime,
+      "endTime" to endTime,
+      "isoStartDate" to record.startTime.toString(),
+      "isoEndDate" to record.endTime.toString(),
+      "startZoneOffsetMinutes" to record.startZoneOffset?.totalSeconds?.div(60),
+      "endZoneOffsetMinutes" to record.endZoneOffset?.totalSeconds?.div(60),
+      "zoneId" to null,
+      "flow" to null,
+      "isCycleStart" to true,
+      "source" to menstrualSource(record.metadata)
+    )
+  }
+
+  private fun mapMenstruationFlowRecord(record: MenstruationFlowRecord): Map<String, Any?> {
+    val time = record.time.toEpochMilli()
+    val zoneOffsetMinutes = record.zoneOffset?.totalSeconds?.div(60)
+    return mapOf(
+      "id" to record.metadata.id,
+      "kind" to "flow",
+      "startTime" to time,
+      "endTime" to time,
+      "isoStartDate" to record.time.toString(),
+      "isoEndDate" to record.time.toString(),
+      "startZoneOffsetMinutes" to zoneOffsetMinutes,
+      "endZoneOffsetMinutes" to zoneOffsetMinutes,
+      "zoneId" to null,
+      "flow" to when (record.flow) {
+        MenstruationFlowRecord.FLOW_LIGHT -> "light"
+        MenstruationFlowRecord.FLOW_MEDIUM -> "medium"
+        MenstruationFlowRecord.FLOW_HEAVY -> "heavy"
+        else -> "unknown"
+      },
+      "isCycleStart" to null,
+      "source" to menstrualSource(record.metadata)
+    )
   }
 
   private fun mapWeightRecord(record: WeightRecord): Map<String, Any?> {
@@ -845,7 +1125,50 @@ class HealthModule : Module() {
 
   internal fun resolvePermissionResult(granted: Boolean) {
     Log.d(TAG, "Resolving permission result: $granted")
-    pendingPermissionPromise?.resolve(granted)
+    val promise = pendingPermissionPromise
+    val scopedCapabilities = pendingPermissionCapabilities
+    val historicalAccess = pendingHistoricalAccess
     pendingPermissionPromise = null
+    pendingPermissionCapabilities = null
+    pendingHistoricalAccess = false
+
+    if (promise == null) return
+    if (historicalAccess) {
+      moduleScope.launch {
+        try {
+          val grantedPermissions = withContext(ioDispatcher) {
+            healthConnectClient.permissionController.getGrantedPermissions()
+          }
+          val status = if (
+            HealthPermission.PERMISSION_READ_HEALTH_DATA_HISTORY in grantedPermissions
+          ) {
+            "granted"
+          } else {
+            "denied"
+          }
+          promise.resolve(makeHistoricalAccessResult(status))
+        } catch (e: Exception) {
+          Log.e(TAG, "Error checking historical permission result", e)
+          promise.reject("historical_authorization_error", e.message, e)
+        }
+      }
+      return
+    }
+    if (scopedCapabilities == null) {
+      promise.resolve(granted)
+      return
+    }
+
+    moduleScope.launch {
+      try {
+        val grantedPermissions = withContext(ioDispatcher) {
+          healthConnectClient.permissionController.getGrantedPermissions()
+        }
+        promise.resolve(makeAuthorizationResult(scopedCapabilities, grantedPermissions))
+      } catch (e: Exception) {
+        Log.e(TAG, "Error checking capability-scoped permission result", e)
+        promise.reject("authorization_error", e.message, e)
+      }
+    }
   }
 }
