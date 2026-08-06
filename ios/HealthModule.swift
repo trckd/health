@@ -100,6 +100,67 @@ public class HealthModule: Module {
       }
     }
 
+    AsyncFunction("requestAccess") { (capabilities: [String], promise: Promise) in
+      guard HKHealthStore.isHealthDataAvailable() else {
+        promise.reject("HealthKit unavailable", "HealthKit is not available on this device")
+        return
+      }
+
+      let invalid = capabilities.filter { !self.supportedCapabilities.contains($0) }
+      guard invalid.isEmpty else {
+        promise.reject("invalid_capability", "Unsupported health capabilities: \(invalid.joined(separator: ", "))")
+        return
+      }
+      // Duplicate capabilities are harmless. Keep the public result stable by
+      // reporting each one only once.
+      let requested = self.uniqueCapabilities(capabilities)
+
+      if requested.isEmpty {
+        promise.resolve(self.makeAuthorizationResult(requested: [], success: true))
+        return
+      }
+
+      var typesToRead = Set<HKObjectType>()
+      for capability in requested {
+        guard let type = self.healthObjectType(for: capability) else {
+          promise.reject("Type unavailable", "HealthKit type for \(capability) is not available")
+          return
+        }
+        typesToRead.insert(type)
+      }
+
+      self.healthStore.requestAuthorization(toShare: [], read: typesToRead) { success, error in
+        if let error {
+          promise.reject("authorization_error", error.localizedDescription)
+          return
+        }
+
+        // HealthKit intentionally does not reveal read authorization state.
+        // A successful result means the request completed, not that reads were
+        // granted. Callers must treat an empty query as either no data or denied.
+        promise.resolve(self.makeAuthorizationResult(requested: requested, success: success))
+      }
+    }
+
+    AsyncFunction("requestHistoricalAccess") { (promise: Promise) in
+      // HealthKit does not have an additional history permission or the
+      // Health Connect 30-day default. The existing type-scoped read grant is
+      // sufficient for any date range, subject to the user's read decision.
+      guard HKHealthStore.isHealthDataAvailable() else {
+        promise.resolve([
+          "success": false,
+          "platform": "ios",
+          "status": "unavailable"
+        ])
+        return
+      }
+      promise.resolve([
+        "success": true,
+        "platform": "ios",
+        "status": "not_required"
+      ])
+    }
+
     AsyncFunction("getStepCount") { (startDateMs: Double, endDateMs: Double, promise: Promise) in
       guard HKHealthStore.isHealthDataAvailable() else {
         promise.reject("HealthKit unavailable", "HealthKit is not available on this device")
@@ -249,6 +310,56 @@ public class HealthModule: Module {
       }
 
       healthStore.execute(query)
+    }
+
+    AsyncFunction("getMenstrualCycleRecords") {
+      (startDateMs: Double, endDateMs: Double, promise: Promise) in
+      guard HKHealthStore.isHealthDataAvailable() else {
+        promise.reject("HealthKit unavailable", "HealthKit is not available on this device")
+        return
+      }
+
+      guard let menstrualFlowType = HKObjectType.categoryType(forIdentifier: .menstrualFlow) else {
+        promise.reject("Type unavailable", "Menstrual flow type is not available")
+        return
+      }
+
+      let startDate = Date(timeIntervalSince1970: startDateMs / 1000.0)
+      let endDate = Date(timeIntervalSince1970: endDateMs / 1000.0)
+      guard startDate < endDate else {
+        promise.reject("invalid_date_range", "startDate must be before endDate")
+        return
+      }
+
+      // No strict boundary option: a single HealthKit sample may span an
+      // entire period and should still be returned when it overlaps the range.
+      let predicate = HKQuery.predicateForSamples(withStart: startDate, end: endDate)
+      let sortDescriptor = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: true)
+      let query = HKSampleQuery(
+        sampleType: menstrualFlowType,
+        predicate: predicate,
+        limit: HKObjectQueryNoLimit,
+        sortDescriptors: [sortDescriptor]
+      ) { [weak self] _, samples, error in
+        guard let self else {
+          DispatchQueue.main.async { promise.resolve([]) }
+          return
+        }
+
+        if let error {
+          promise.reject("menstrual_cycle_read_error", error.localizedDescription)
+          return
+        }
+
+        let records = ((samples as? [HKCategorySample]) ?? [])
+          .map(self.makeMenstrualCyclePayload)
+
+        DispatchQueue.main.async {
+          promise.resolve(records)
+        }
+      }
+
+      self.healthStore.execute(query)
     }
 
     AsyncFunction("enableBackgroundDelivery") { (frequency: String, promise: Promise) in
@@ -565,6 +676,106 @@ public class HealthModule: Module {
       "isoDate": isoFormatter.string(from: sample.startDate),
       "source": sample.sourceRevision.source.name
     ]
+  }
+
+  private let supportedCapabilities = ["steps", "bodyweight", "sleep", "menstrualCycle"]
+
+  private func uniqueCapabilities(_ capabilities: [String]) -> [String] {
+    var seen = Set<String>()
+    return capabilities.filter { capability in
+      supportedCapabilities.contains(capability) && seen.insert(capability).inserted
+    }
+  }
+
+  private func healthObjectType(for capability: String) -> HKObjectType? {
+    switch capability {
+    case "steps":
+      return HKQuantityType.quantityType(forIdentifier: .stepCount)
+    case "bodyweight":
+      return HKQuantityType.quantityType(forIdentifier: .bodyMass)
+    case "sleep":
+      return HKObjectType.categoryType(forIdentifier: .sleepAnalysis)
+    case "menstrualCycle":
+      return HKObjectType.categoryType(forIdentifier: .menstrualFlow)
+    default:
+      return nil
+    }
+  }
+
+  private func makeAuthorizationResult(requested: [String], success: Bool) -> [String: Any] {
+    return [
+      "success": success,
+      "requested": requested,
+      "granted": [],
+      "denied": [],
+      "unknown": requested
+    ]
+  }
+
+  private func makeMenstrualCyclePayload(from sample: HKCategorySample) -> [String: Any] {
+    let cycleStart = (sample.metadata?[HKMetadataKeyMenstrualCycleStart] as? NSNumber)?.boolValue
+    let zoneId = sample.metadata?[HKMetadataKeyTimeZone] as? String
+    let zone = zoneId.flatMap(TimeZone.init(identifier:))
+    let sourceRevision = sample.sourceRevision
+    let source = sourceRevision.source
+    let recordId = sample.uuid.uuidString
+    let clientRecordId = (sample.metadata?[HKMetadataKeySyncIdentifier] as? String)
+      ?? (sample.metadata?[HKMetadataKeyExternalUUID] as? String)
+    let startTime = Int(sample.startDate.timeIntervalSince1970 * 1000.0)
+    let endTime = Int(sample.endDate.timeIntervalSince1970 * 1000.0)
+
+    let provenance: [String: Any] = [
+      "platform": "healthkit",
+      "recordId": recordId,
+      "bundleIdentifier": source.bundleIdentifier,
+      "name": source.name,
+      "version": valueOrNull(sourceRevision.version),
+      "clientRecordId": valueOrNull(clientRecordId),
+      "lastModifiedTime": NSNull()
+    ]
+
+    return [
+      "id": recordId,
+      // HealthKit represents both a whole period and per-day flow with the
+      // same sample type. The required cycle-start marker distinguishes the
+      // first/whole-period sample without discarding its flow intensity.
+      "kind": cycleStart == true ? "period" : "flow",
+      "startTime": startTime,
+      "endTime": endTime,
+      "isoStartDate": isoFormatter.string(from: sample.startDate),
+      "isoEndDate": isoFormatter.string(from: sample.endDate),
+      "startZoneOffsetMinutes": valueOrNull(zone.map { $0.secondsFromGMT(for: sample.startDate) / 60 }),
+      "endZoneOffsetMinutes": valueOrNull(zone.map { $0.secondsFromGMT(for: sample.endDate) / 60 }),
+      "zoneId": valueOrNull(zoneId),
+      "flow": menstrualFlowString(for: sample.value),
+      "isCycleStart": valueOrNull(cycleStart),
+      "source": provenance
+    ]
+  }
+
+  private func valueOrNull(_ value: Any?) -> Any {
+    return value ?? NSNull()
+  }
+
+  private func menstrualFlowString(for value: Int) -> String {
+    guard let flow = HKCategoryValueMenstrualFlow(rawValue: value) else {
+      return "unknown"
+    }
+
+    switch flow {
+    case .none:
+      return "none"
+    case .light:
+      return "light"
+    case .medium:
+      return "medium"
+    case .heavy:
+      return "heavy"
+    case .unspecified:
+      return "unknown"
+    @unknown default:
+      return "unknown"
+    }
   }
 
   private func dayBounds(for date: Date) -> (start: Date, end: Date) {

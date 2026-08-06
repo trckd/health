@@ -1,10 +1,16 @@
+import { useState } from 'react';
 import { Button, SafeAreaView, ScrollView, Text, View } from 'react-native';
+import { Health, MenstrualCycleRecord } from '@tracked/health';
 import { useSteps } from './use-steps';
 import { useBodyWeight } from './use-body-weight';
 
 const DEMO_DATE = "2025-05-01";
 
 export default function App() {
+  const [menstrualRecords, setMenstrualRecords] = useState<
+    MenstrualCycleRecord[]
+  >([]);
+  const [menstrualStatus, setMenstrualStatus] = useState('Not requested');
   const {
     steps,
     loading: stepsLoading,
@@ -21,6 +27,30 @@ export default function App() {
     error: weightError,
     refresh: refreshBodyWeight,
   } = useBodyWeight(DEMO_DATE, { units: 'kg' });
+
+  const importMenstrualHistory = async () => {
+    try {
+      setMenstrualStatus('Requesting access…');
+      const authorization = await Health.requestAccess(['menstrualCycle']);
+      if (!authorization.success) {
+        setMenstrualStatus('Menstrual-cycle access was denied');
+        return;
+      }
+
+      const historicalAccess = await Health.requestHistoricalAccess();
+      const end = Date.now();
+      const start = end - 180 * 24 * 60 * 60 * 1000;
+      const records = await Health.getMenstrualCycleRecords(start, end);
+      setMenstrualRecords(records);
+      const historyNote = historicalAccess.success
+        ? ''
+        : ' (platform history may be limited)';
+      setMenstrualStatus(`Loaded ${records.length} records${historyNote}`);
+    } catch (error) {
+      console.error('Failed to import menstrual-cycle records', error);
+      setMenstrualStatus('Import failed');
+    }
+  };
 
   return (
     <SafeAreaView style={styles.container}>
@@ -45,6 +75,25 @@ export default function App() {
           <Text>Status: {weightLoading ? 'Syncing…' : 'Idle'}</Text>
           <Text>Error: {weightError ?? '—'}</Text>
           <Button title="Refresh" onPress={refreshBodyWeight} />
+        </Group>
+
+        <Group name="Menstrual cycle (foreground, read-only)">
+          <Text>Status: {menstrualStatus}</Text>
+          <Text>
+            Periods:{' '}
+            {
+              menstrualRecords.filter((record) => record.kind === 'period')
+                .length
+            }
+          </Text>
+          <Text>
+            Flow observations:{' '}
+            {menstrualRecords.filter((record) => record.kind === 'flow').length}
+          </Text>
+          <Button
+            title="Request access and import"
+            onPress={importMenstrualHistory}
+          />
         </Group>
       </ScrollView>
     </SafeAreaView>
