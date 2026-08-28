@@ -75,7 +75,7 @@ public class HealthModule: Module {
 
     AsyncFunction("requestAuthorization") { (promise: Promise) in
       guard HKHealthStore.isHealthDataAvailable() else {
-        promise.reject("HealthKit unavailable", "HealthKit is not available on this device")
+        promise.reject(HealthModuleException("HealthKit unavailable", "HealthKit is not available on this device"))
         return
       }
 
@@ -84,7 +84,7 @@ public class HealthModule: Module {
         let bodyMassType = HKQuantityType.quantityType(forIdentifier: .bodyMass),
         let sleepAnalysisType = HKObjectType.categoryType(forIdentifier: .sleepAnalysis)
       else {
-        promise.reject("Type unavailable", "Required HealthKit data types are not available")
+        promise.reject(HealthModuleException("Type unavailable", "Required HealthKit data types are not available"))
         return
       }
 
@@ -92,7 +92,7 @@ public class HealthModule: Module {
 
       healthStore.requestAuthorization(toShare: [], read: typesToRead) { success, error in
         if let error {
-          promise.reject("authorization_error", error.localizedDescription)
+          promise.reject(HealthModuleException("authorization_error", error: error))
           return
         }
 
@@ -102,13 +102,13 @@ public class HealthModule: Module {
 
     AsyncFunction("requestAccess") { (capabilities: [String], promise: Promise) in
       guard HKHealthStore.isHealthDataAvailable() else {
-        promise.reject("HealthKit unavailable", "HealthKit is not available on this device")
+        promise.reject(HealthModuleException("HealthKit unavailable", "HealthKit is not available on this device"))
         return
       }
 
       let invalid = capabilities.filter { !self.supportedCapabilities.contains($0) }
       guard invalid.isEmpty else {
-        promise.reject("invalid_capability", "Unsupported health capabilities: \(invalid.joined(separator: ", "))")
+        promise.reject(HealthModuleException("invalid_capability", "Unsupported health capabilities: \(invalid.joined(separator: ", "))"))
         return
       }
       // Duplicate capabilities are harmless. Keep the public result stable by
@@ -123,7 +123,7 @@ public class HealthModule: Module {
       var typesToRead = Set<HKObjectType>()
       for capability in requested {
         guard let type = self.healthObjectType(for: capability) else {
-          promise.reject("Type unavailable", "HealthKit type for \(capability) is not available")
+          promise.reject(HealthModuleException("Type unavailable", "HealthKit type for \(capability) is not available"))
           return
         }
         typesToRead.insert(type)
@@ -131,7 +131,7 @@ public class HealthModule: Module {
 
       self.healthStore.requestAuthorization(toShare: [], read: typesToRead) { success, error in
         if let error {
-          promise.reject("authorization_error", error.localizedDescription)
+          promise.reject(HealthModuleException("authorization_error", error: error))
           return
         }
 
@@ -163,12 +163,12 @@ public class HealthModule: Module {
 
     AsyncFunction("getStepCount") { (startDateMs: Double, endDateMs: Double, promise: Promise) in
       guard HKHealthStore.isHealthDataAvailable() else {
-        promise.reject("HealthKit unavailable", "HealthKit is not available on this device")
+        promise.reject(HealthModuleException("HealthKit unavailable", "HealthKit is not available on this device"))
         return
       }
 
       guard let stepCountType = HKQuantityType.quantityType(forIdentifier: .stepCount) else {
-        promise.reject("Type unavailable", "Step count type is not available")
+        promise.reject(HealthModuleException("Type unavailable", "Step count type is not available"))
         return
       }
 
@@ -182,7 +182,7 @@ public class HealthModule: Module {
         options: .cumulativeSum
       ) { _, result, error in
         if let error {
-          promise.reject("statistics_error", error.localizedDescription)
+          promise.reject(HealthModuleException("statistics_error", error: error))
           return
         }
 
@@ -197,12 +197,12 @@ public class HealthModule: Module {
 
     AsyncFunction("hasStepDataForDate") { (startDateMs: Double, endDateMs: Double, promise: Promise) in
       guard HKHealthStore.isHealthDataAvailable() else {
-        promise.reject("HealthKit unavailable", "HealthKit is not available on this device")
+        promise.reject(HealthModuleException("HealthKit unavailable", "HealthKit is not available on this device"))
         return
       }
 
       guard let stepCountType = HKQuantityType.quantityType(forIdentifier: .stepCount) else {
-        promise.reject("Type unavailable", "Step count type is not available")
+        promise.reject(HealthModuleException("Type unavailable", "Step count type is not available"))
         return
       }
 
@@ -216,7 +216,7 @@ public class HealthModule: Module {
         options: .cumulativeSum
       ) { _, result, error in
         if let error {
-          promise.reject("statistics_error", error.localizedDescription)
+          promise.reject(HealthModuleException("statistics_error", error: error))
           return
         }
 
@@ -231,12 +231,12 @@ public class HealthModule: Module {
 
     AsyncFunction("getBodyWeightSamples") { (startDateMs: Double, endDateMs: Double, promise: Promise) in
       guard HKHealthStore.isHealthDataAvailable() else {
-        promise.reject("HealthKit unavailable", "HealthKit is not available on this device")
+        promise.reject(HealthModuleException("HealthKit unavailable", "HealthKit is not available on this device"))
         return
       }
 
       guard let bodyMassType = HKQuantityType.quantityType(forIdentifier: .bodyMass) else {
-        promise.reject("Type unavailable", "Body mass type is not available")
+        promise.reject(HealthModuleException("Type unavailable", "Body mass type is not available"))
         return
       }
 
@@ -257,7 +257,7 @@ public class HealthModule: Module {
         }
 
         if let error {
-          promise.reject("body_weight_read_error", error.localizedDescription)
+          promise.reject(HealthModuleException("body_weight_read_error", error: error))
           return
         }
 
@@ -274,12 +274,12 @@ public class HealthModule: Module {
 
     AsyncFunction("getLatestBodyWeight") { (promise: Promise) in
       guard HKHealthStore.isHealthDataAvailable() else {
-        promise.reject("HealthKit unavailable", "HealthKit is not available on this device")
+        promise.reject(HealthModuleException("HealthKit unavailable", "HealthKit is not available on this device"))
         return
       }
 
       guard let bodyMassType = HKQuantityType.quantityType(forIdentifier: .bodyMass) else {
-        promise.reject("Type unavailable", "Body mass type is not available")
+        promise.reject(HealthModuleException("Type unavailable", "Body mass type is not available"))
         return
       }
 
@@ -297,7 +297,7 @@ public class HealthModule: Module {
         }
 
         if let error {
-          promise.reject("body_weight_read_error", error.localizedDescription)
+          promise.reject(HealthModuleException("body_weight_read_error", error: error))
           return
         }
 
@@ -315,19 +315,19 @@ public class HealthModule: Module {
     AsyncFunction("getMenstrualCycleRecords") {
       (startDateMs: Double, endDateMs: Double, promise: Promise) in
       guard HKHealthStore.isHealthDataAvailable() else {
-        promise.reject("HealthKit unavailable", "HealthKit is not available on this device")
+        promise.reject(HealthModuleException("HealthKit unavailable", "HealthKit is not available on this device"))
         return
       }
 
       guard let menstrualFlowType = HKObjectType.categoryType(forIdentifier: .menstrualFlow) else {
-        promise.reject("Type unavailable", "Menstrual flow type is not available")
+        promise.reject(HealthModuleException("Type unavailable", "Menstrual flow type is not available"))
         return
       }
 
       let startDate = Date(timeIntervalSince1970: startDateMs / 1000.0)
       let endDate = Date(timeIntervalSince1970: endDateMs / 1000.0)
       guard startDate < endDate else {
-        promise.reject("invalid_date_range", "startDate must be before endDate")
+        promise.reject(HealthModuleException("invalid_date_range", "startDate must be before endDate"))
         return
       }
 
@@ -347,7 +347,7 @@ public class HealthModule: Module {
         }
 
         if let error {
-          promise.reject("menstrual_cycle_read_error", error.localizedDescription)
+          promise.reject(HealthModuleException("menstrual_cycle_read_error", error: error))
           return
         }
 
@@ -364,12 +364,12 @@ public class HealthModule: Module {
 
     AsyncFunction("enableBackgroundDelivery") { (frequency: String, promise: Promise) in
       guard HKHealthStore.isHealthDataAvailable() else {
-        promise.reject("HealthKit unavailable", "HealthKit is not available on this device")
+        promise.reject(HealthModuleException("HealthKit unavailable", "HealthKit is not available on this device"))
         return
       }
 
       guard let stepCountType = HKQuantityType.quantityType(forIdentifier: .stepCount) else {
-        promise.reject("Type unavailable", "Step count type is not available")
+        promise.reject(HealthModuleException("Type unavailable", "Step count type is not available"))
         return
       }
 
@@ -384,7 +384,7 @@ public class HealthModule: Module {
 
       healthStore.enableBackgroundDelivery(for: stepCountType, frequency: updateFrequency) { success, error in
         if let error {
-          promise.reject("background_delivery_error", error.localizedDescription)
+          promise.reject(HealthModuleException("background_delivery_error", error: error))
           return
         }
 
@@ -398,12 +398,12 @@ public class HealthModule: Module {
 
     AsyncFunction("disableBackgroundDelivery") { (promise: Promise) in
       guard HKHealthStore.isHealthDataAvailable() else {
-        promise.reject("HealthKit unavailable", "HealthKit is not available on this device")
+        promise.reject(HealthModuleException("HealthKit unavailable", "HealthKit is not available on this device"))
         return
       }
 
       guard let stepCountType = HKQuantityType.quantityType(forIdentifier: .stepCount) else {
-        promise.reject("Type unavailable", "Step count type is not available")
+        promise.reject(HealthModuleException("Type unavailable", "Step count type is not available"))
         return
       }
 
@@ -415,7 +415,7 @@ public class HealthModule: Module {
 
       self.healthStore.disableBackgroundDelivery(for: stepCountType) { success, error in
         if let error {
-          promise.reject("background_delivery_error", error.localizedDescription)
+          promise.reject(HealthModuleException("background_delivery_error", error: error))
           return
         }
 
@@ -425,12 +425,12 @@ public class HealthModule: Module {
 
     AsyncFunction("enableBodyWeightUpdates") { (frequency: String, promise: Promise) in
       guard HKHealthStore.isHealthDataAvailable() else {
-        promise.reject("HealthKit unavailable", "HealthKit is not available on this device")
+        promise.reject(HealthModuleException("HealthKit unavailable", "HealthKit is not available on this device"))
         return
       }
 
       guard let bodyMassType = HKQuantityType.quantityType(forIdentifier: .bodyMass) else {
-        promise.reject("Type unavailable", "Body mass type is not available")
+        promise.reject(HealthModuleException("Type unavailable", "Body mass type is not available"))
         return
       }
 
@@ -445,7 +445,7 @@ public class HealthModule: Module {
 
       healthStore.enableBackgroundDelivery(for: bodyMassType, frequency: updateFrequency) { success, error in
         if let error {
-          promise.reject("body_weight_delivery_error", error.localizedDescription)
+          promise.reject(HealthModuleException("body_weight_delivery_error", error: error))
           return
         }
 
@@ -459,12 +459,12 @@ public class HealthModule: Module {
 
     AsyncFunction("disableBodyWeightUpdates") { (promise: Promise) in
       guard HKHealthStore.isHealthDataAvailable() else {
-        promise.reject("HealthKit unavailable", "HealthKit is not available on this device")
+        promise.reject(HealthModuleException("HealthKit unavailable", "HealthKit is not available on this device"))
         return
       }
 
       guard let bodyMassType = HKQuantityType.quantityType(forIdentifier: .bodyMass) else {
-        promise.reject("Type unavailable", "Body mass type is not available")
+        promise.reject(HealthModuleException("Type unavailable", "Body mass type is not available"))
         return
       }
 
@@ -478,7 +478,7 @@ public class HealthModule: Module {
 
       self.healthStore.disableBackgroundDelivery(for: bodyMassType) { success, error in
         if let error {
-          promise.reject("body_weight_delivery_error", error.localizedDescription)
+          promise.reject(HealthModuleException("body_weight_delivery_error", error: error))
           return
         }
 
@@ -488,12 +488,12 @@ public class HealthModule: Module {
 
     AsyncFunction("getSleepSessions") { (startDateMs: Double, endDateMs: Double, promise: Promise) in
       guard HKHealthStore.isHealthDataAvailable() else {
-        promise.reject("HealthKit unavailable", "HealthKit is not available on this device")
+        promise.reject(HealthModuleException("HealthKit unavailable", "HealthKit is not available on this device"))
         return
       }
 
       guard let sleepAnalysisType = HKObjectType.categoryType(forIdentifier: .sleepAnalysis) else {
-        promise.reject("Type unavailable", "Sleep analysis type is not available")
+        promise.reject(HealthModuleException("Type unavailable", "Sleep analysis type is not available"))
         return
       }
 
@@ -514,7 +514,7 @@ public class HealthModule: Module {
         }
 
         if let error {
-          promise.reject("sleep_read_error", error.localizedDescription)
+          promise.reject(HealthModuleException("sleep_read_error", error: error))
           return
         }
 
@@ -531,12 +531,12 @@ public class HealthModule: Module {
 
     AsyncFunction("enableSleepUpdates") { (frequency: String, promise: Promise) in
       guard HKHealthStore.isHealthDataAvailable() else {
-        promise.reject("HealthKit unavailable", "HealthKit is not available on this device")
+        promise.reject(HealthModuleException("HealthKit unavailable", "HealthKit is not available on this device"))
         return
       }
 
       guard let sleepAnalysisType = HKObjectType.categoryType(forIdentifier: .sleepAnalysis) else {
-        promise.reject("Type unavailable", "Sleep analysis type is not available")
+        promise.reject(HealthModuleException("Type unavailable", "Sleep analysis type is not available"))
         return
       }
 
@@ -551,7 +551,7 @@ public class HealthModule: Module {
 
       healthStore.enableBackgroundDelivery(for: sleepAnalysisType, frequency: updateFrequency) { success, error in
         if let error {
-          promise.reject("sleep_delivery_error", error.localizedDescription)
+          promise.reject(HealthModuleException("sleep_delivery_error", error: error))
           return
         }
 
@@ -565,12 +565,12 @@ public class HealthModule: Module {
 
     AsyncFunction("disableSleepUpdates") { (promise: Promise) in
       guard HKHealthStore.isHealthDataAvailable() else {
-        promise.reject("HealthKit unavailable", "HealthKit is not available on this device")
+        promise.reject(HealthModuleException("HealthKit unavailable", "HealthKit is not available on this device"))
         return
       }
 
       guard let sleepAnalysisType = HKObjectType.categoryType(forIdentifier: .sleepAnalysis) else {
-        promise.reject("Type unavailable", "Sleep analysis type is not available")
+        promise.reject(HealthModuleException("Type unavailable", "Sleep analysis type is not available"))
         return
       }
 
@@ -584,7 +584,7 @@ public class HealthModule: Module {
 
       self.healthStore.disableBackgroundDelivery(for: sleepAnalysisType) { success, error in
         if let error {
-          promise.reject("sleep_delivery_error", error.localizedDescription)
+          promise.reject(HealthModuleException("sleep_delivery_error", error: error))
           return
         }
 
